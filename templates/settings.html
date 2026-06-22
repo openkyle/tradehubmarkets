@@ -1,0 +1,181 @@
+<form class="thm-root thm-compact thm-settings-form" autocomplete="off">
+  <nav class="thm-settings-tabs">
+    <button type="button" class="active" data-tab="compendiums">Compendiums</button>
+    <button type="button" data-tab="visuals">Visuals</button>
+    <button type="button" data-tab="capital">Capital</button>
+    <button type="button" data-tab="market">Market Math</button>
+    <button type="button" data-tab="help">Help</button>
+  </nav>
+
+  <section class="thm-settings-section active" data-tab-panel="compendiums">
+    <h2>Compendiums</h2>
+    <p class="notes">Choose the packs TradeHub should use. Folder selectors appear when the selected pack contains folders.</p>
+    {{#each packFields}}
+      <div class="thm-settings-row thm-pack-field" data-pack-key="{{packKey}}" data-folder-key="{{folderKey}}">
+        <label>
+          <span>{{label}}</span>
+          <small>{{hint}}</small>
+        </label>
+        <div class="thm-settings-control">
+          <select name="{{packKey}}">{{{options}}}</select>
+          <div class="thm-folder-row" hidden>
+            <label>Folder/Subfolder</label>
+            <select name="{{folderKey}}" data-current="{{folderValue}}"></select>
+          </div>
+        </div>
+      </div>
+    {{/each}}
+  </section>
+
+  <section class="thm-settings-section" data-tab-panel="visuals">
+    <h2>Visuals</h2>
+    <div class="thm-settings-row">
+      <label>
+        <span>Marketplace Splash Image</span>
+        <small>URL or Foundry path used on Starport Services.</small>
+      </label>
+      <input type="text" name="marketplaceImage" value="{{settings.marketplaceImage}}">
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Advertisement Folder</span>
+        <small>FilePicker folder or URL folder for random market ads.</small>
+      </label>
+      <input type="text" name="adFolder" value="{{settings.adFolder}}">
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Dock / Travel Sound</span>
+        <small>Audio file or URL played for all players when selected on Dock / Travel.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="dockSoundPath" value="{{settings.dockSoundPath}}">
+        <button type="button" data-file-picker data-target="dockSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Starport Load Sound</span>
+        <small>Audio file or URL played locally when Starport Services opens.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="starportLoadSoundPath" value="{{settings.starportLoadSoundPath}}">
+        <button type="button" data-file-picker data-target="starportLoadSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Vehicle Label</span>
+        <small>Shown as Vessel, Ship, Vehicle, Carriage, etc.</small>
+      </label>
+      <input type="text" name="vehicleLabel" value="{{settings.vehicleLabel}}">
+    </div>
+  </section>
+
+  <section class="thm-settings-section" data-tab-panel="capital">
+    <h2>Capital And Services</h2>
+    <div class="thm-settings-row">
+      <label>
+        <span>TradeHub Capital</span>
+        <small>Internal party funds used by markets, repairs, restock, and shipyard.</small>
+      </label>
+      <input type="number" name="capital" value="{{settings.capital}}">
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Repair Cost Per HP</span>
+        <small>Capital cost to restore one missing equipment HP.</small>
+      </label>
+      <input type="number" name="repairCostPerHp" value="{{settings.repairCostPerHp}}">
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Repair Cost Per Shield Point</span>
+        <small>Capital cost to restore one missing shield generator HP.</small>
+      </label>
+      <input type="number" name="repairCostPerShieldPoint" value="{{settings.repairCostPerShieldPoint}}">
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Launch Marketplace On Dock</span>
+        <small>Open Starport Services for logged-in users when docking completes.</small>
+      </label>
+      <input type="checkbox" name="launchOnDock" {{#if settings.launchOnDock}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Show Floating GM Controls</span>
+        <small>Display the draggable TradeHub GM bar.</small>
+      </label>
+      <input type="checkbox" name="showGmBar" {{#if settings.showGmBar}}checked{{/if}}>
+    </div>
+  </section>
+
+  <section class="thm-settings-section" data-tab-panel="market">
+    <h2>Market Math</h2>
+    <p class="notes">Max Shortage % is the highest hidden rumor-driven price increase. If you set 200, a predictive shortage can roll up to 200% above the base price.</p>
+    <p class="notes">TradeHub News tickers are read from folder <strong>TradeHubMarkets</strong>, journal <strong>TradeHubNews</strong>, with pages named for locations such as <strong>Looterra</strong>.</p>
+    {{#if settings.newsJournalUuid}}
+      <button type="button" data-open-news="{{settings.newsJournalUuid}}"><i class="fas fa-book-open"></i> Open TradeHubNews</button>
+    {{/if}}
+    <div class="thm-settings-four">
+      <label>Stock Minimum<input type="number" name="stockMin" value="{{settings.stockMin}}"></label>
+      <label>Stock Maximum<input type="number" name="stockMax" value="{{settings.stockMax}}"></label>
+      <label>Max Price Change %<input type="number" name="maxPriceChangePercent" value="{{settings.maxPriceChangePercent}}"></label>
+      <label>Max Shortage %<input type="number" min="0" name="maxShortagePriceIncreasePercent" value="{{settings.maxShortagePriceIncreasePercent}}"></label>
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Enable Predictive Rumours</span>
+        <small>Wildcard ticker hints. If players watch the news, one or two location rumours may foreshadow future market shifts.</small>
+      </label>
+      <input type="checkbox" name="enableTradeRumours" {{#if settings.enableTradeRumours}}checked{{/if}}>
+    </div>
+  </section>
+
+  <section class="thm-settings-section" data-tab-panel="help">
+    <h2>Help</h2>
+    <div class="thm-help-grid">
+      <article>
+        <h3>What TradeHub Does</h3>
+        <p>TradeHub Markets runs party docking, local market stock, buy and sell transactions, cargo tracking, shipyard purchases, consumable restock, repairs, TradeHub capital, news tickers, and vehicle combat tools from one module.</p>
+      </article>
+      <article>
+        <h3>Compendiums</h3>
+        <p>Trade goods, restock supplies, vehicle consumables, and shipyard craft all come from compendium packs. Select a pack in the Compendiums tab, then optionally choose a folder or subfolder when you want only part of that pack used.</p>
+      </article>
+      <article>
+        <h3>Markets</h3>
+        <p>Docking generates or refreshes the current location market. Prices, stock, illegal-market state, emergency state, last-paid prices, and predictive rumours are stored in TradeHub world data so players see the same market.</p>
+      </article>
+      <article>
+        <h3>Vehicles</h3>
+        <p>Starport Services lists world vehicle actors the player owns. TradeHub reads equipment and weapon modules on each vehicle to calculate HP, max HP, AC, module value, jump data, repair state, cargo, and combat targets.</p>
+      </article>
+      <article>
+        <h3>Capital</h3>
+        <p>TradeHub Capital is internal party money. Purchases, sales, restock, repairs, shipyard buys, banking adjustments, and GM full-service repair all update this value without needing a Bank of Holding actor.</p>
+      </article>
+      <article>
+        <h3>Repairs And Pristine</h3>
+        <p>Make Pristine fully restores modules and recalculates final vehicle stats. Live sync updates structural stats when modules are added, removed, or edited while preserving damage. Full Service Repair bills capital; Ability Check Repair applies rolled HP.</p>
+      </article>
+      <article>
+        <h3>Combat Damage</h3>
+        <p>The Combat Damage tool reads recent chat roll data but keeps fields editable. Shields absorb first, hull reinforcement protects after shields, fuel scooping targets the fuel scoop, mining targets refinery first, and module AC limits vulnerable targets.</p>
+      </article>
+      <article>
+        <h3>News Tickers</h3>
+        <p>Create folder <strong>TradeHubMarkets</strong>, journal <strong>TradeHubNews</strong>, and pages named after locations. Each line can become a ticker headline. Predictive rumours can add hidden market hints when enabled.</p>
+      </article>
+      <article>
+        <h3>GM Controls</h3>
+        <p>The floating GM bar opens Docking, Starport Services, Ship Tools, Combat Damage, Banking, and Settings. Player macros are bundled in the TradeHub Markets Macros compendium for quick access.</p>
+      </article>
+    </div>
+  </section>
+
+  <footer class="sheet-footer flexrow">
+    <button type="submit"><i class="fas fa-save"></i> Save TradeHub Settings</button>
+  </footer>
+</form>

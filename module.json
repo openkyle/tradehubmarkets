@@ -1,26 +1,38 @@
 {
-  "name": "tradehubmarkets",
+  "id": "tradehub-markets",
+  "name": "tradehub-markets",
   "title": "TradeHub Markets",
-  "description": "A marketplace for creating trade goods and using them in your game as you travel from planet to planet.",
-  "version": "1.0.0",
-  "minimumCoreVersion": "10",
-  "compatibleCoreVersion": "10",
+  "description": "Compendium-backed multi-player markets, docking, cargo trading, supply restock, vehicle repair, and shipyard services for Foundry VTT v11 / DnD5e 2.4.1.",
+  "version": "1.0.51",
   "authors": [
     {
-      "name": "knoself",
-      "discord": "knoself"
+      "name": "edgedoggo"
     }
+  ],
+  "compatibility": {
+    "minimum": "11",
+    "verified": "11"
+  },
+  "esmodules": [
+    "scripts/tradehub-markets.js"
+  ],
+  "styles": [
+    "styles/tradehub-markets.css"
+  ],
+  "templates": [
+    "templates/settings.html"
   ],
   "packs": [
     {
-      "name": "TradeHubmarkets",
-      "label": "TradeHubmarkets",
-      "path": "packs/macros.db",
-      "type": "Macro"
+      "name": "tradehub-macros",
+      "label": "TradeHub Markets Macros",
+      "path": "packs/tradehub-macros.db",
+      "type": "Macro",
+      "system": "dnd5e",
+      "private": false
     }
   ],
-  "esmodules": ["scripts/gmscreen.js", "scripts/playerscreen.js"],
   "socket": true,
-  "manifest": "https://github.com/edgedoggo/tradehubmarkets/releases/download/latest/module.json",
-  "download": "https://github.com/edgedoggo/tradehubmarkets/releases/download/latest/tradehubmarkets.zip"
+  "manifest": "https://github.com/edgedoggo/tradehubmarkets/releases/latest/download/module.json",
+  "download": "https://github.com/edgedoggo/tradehubmarkets/releases/latest/download/tradehub-markets.zip"
 }
