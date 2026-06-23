@@ -2477,9 +2477,7 @@ class BankingPage {
 }
 
 function partyActors({ includeVehicles = false } = {}) {
-  const folder = game.folders.find(f => f.type === "Actor" && f.name === "Party");
-  const actors = folder?.contents || game.actors.contents;
-  return actors.filter(actor => actor && actor.name !== "Bank of Holding" && (includeVehicles || actor.type !== "vehicle"));
+  return game.actors.contents.filter(actor => actor && actor.name !== "Bank of Holding" && (includeVehicles || actor.type !== "vehicle"));
 }
 
 function h4hJournal() {
@@ -2505,7 +2503,31 @@ function plainLinesFromHtml(html) {
 }
 
 function wantedCleanName(name) {
-  return String(name || "").replace(/\[Wanted\]\s*/gi, "").replace(/\((Cha|Con|Dex|Int|Tec|Str|Wis|Gunner|Navigator|Sensors|Quartermaster|Engineering|Captain|First Officer)\)/gi, "").trim();
+  return String(name || "")
+    .replace(/\[Wanted\]\s*/gi, "")
+    .replace(/^(Captain|First Officer|Gunner|Navigator|Sensors|Quartermaster|Engineering|Pilot|Crew|Medic|Cha|Con|Dex|Int|Tec|Str|Wis)\s*:\s*/i, "")
+    .replace(/\((Cha|Con|Dex|Int|Tec|Str|Wis|Gunner|Navigator|Sensors|Quartermaster|Engineering|Captain|First Officer)\)/gi, "")
+    .trim();
+}
+
+function isWantedName(name) {
+  return /\[Wanted\]/i.test(String(name || ""));
+}
+
+function bountyKey(name) {
+  return wantedCleanName(name).toLowerCase();
+}
+
+function vehicleBountyValue(vehicle) {
+  const value = parseNumber(vehicle?.system?.traits?.dimensions || 0) + parseNumber(vehicle?.system?.details?.source?.custom || 0);
+  return Math.floor(value * 0.035);
+}
+
+function actorBountyValue(actor) {
+  const value = parseNumber(actor?.system?.details?.source?.custom || 0)
+    || parseNumber(actor?.system?.traits?.dimensions || 0)
+    || parseNumber(actor?.system?.price?.value ?? actor?.system?.price ?? 0);
+  return Math.floor(value * 0.035);
 }
 
 function fakeCharterCode() {
@@ -2532,24 +2554,59 @@ async function setActorWanted(actor, add) {
   }
 }
 
+async function clearWantedByKey(key) {
+  const cleared = [];
+  for (const actor of game.actors.contents.filter(actor => actor.type !== "vehicle" && isWantedName(actor.name) && bountyKey(actor.name) === key)) {
+    const oldName = actor.name;
+    await actor.update({ name: wantedCleanName(actor.name) });
+    cleared.push(oldName);
+  }
+  for (const vehicle of game.actors.contents.filter(actor => actor.type === "vehicle")) {
+    const crew = clone(vehicle.system?.cargo?.crew || []);
+    let changed = false;
+    for (const member of crew) {
+      if (!member?.name || !isWantedName(member.name) || bountyKey(member.name) !== key) continue;
+      member.name = member.name.replace(/\[Wanted\]\s*/gi, "");
+      changed = true;
+      cleared.push(`${vehicle.name}: ${member.name}`);
+    }
+    if (changed) await vehicle.update({ "system.cargo.crew": crew });
+  }
+  return cleared;
+}
+
 function bountyRows() {
-  const rows = [];
-  for (const vehicle of partyActors({ includeVehicles: true }).filter(actor => actor.type === "vehicle")) {
+  const byName = new Map();
+  const ensureRow = (name, actor = null) => {
+    const clean = wantedCleanName(name);
+    const key = bountyKey(clean);
+    if (!key) return null;
+    const existing = byName.get(key) || { key, actor: null, name: clean, bounty: 0, vessels: [], sources: [] };
+    if (actor && !existing.actor) {
+      existing.actor = actor;
+      existing.name = wantedCleanName(actor.name);
+      existing.bounty = Math.max(existing.bounty, actorBountyValue(actor));
+      existing.sources.push(actor.name);
+    }
+    byName.set(key, existing);
+    return existing;
+  };
+  for (const actor of game.actors.contents.filter(actor => actor.type !== "vehicle" && actor.name !== "Bank of Holding" && isWantedName(actor.name))) {
+    ensureRow(actor.name, actor);
+  }
+  for (const vehicle of game.actors.contents.filter(actor => actor.type === "vehicle")) {
     const crew = vehicle.system?.cargo?.crew || [];
     for (const member of crew) {
-      if (!member?.name?.includes("[Wanted]")) continue;
-      const value = parseNumber(vehicle.system?.traits?.dimensions || 0) + parseNumber(vehicle.system?.details?.source?.custom || 0);
-      rows.push({
-        vehicle,
-        name: wantedCleanName(member.name),
-        bounty: Math.floor(value * 0.035)
-      });
+      if (!isWantedName(member?.name)) continue;
+      const row = ensureRow(member.name);
+      if (!row) continue;
+      const bounty = vehicleBountyValue(vehicle);
+      row.bounty += bounty;
+      row.vessels.push({ name: vehicle.name, bounty });
+      row.sources.push(`${vehicle.name}: ${member.name}`);
     }
   }
-  for (const actor of partyActors().filter(actor => actor.name.includes("[Wanted]"))) {
-    if (!rows.some(row => row.name === wantedCleanName(actor.name))) rows.push({ actor, name: wantedCleanName(actor.name), bounty: 0 });
-  }
-  return rows;
+  return [...byName.values()].sort((a, b) => b.bounty - a.bounty || a.name.localeCompare(b.name));
 }
 
 class MeetNpcPage {
@@ -2731,22 +2788,37 @@ class HeroesForHirePage {
       const pay = entry.name.match(/\[\s*\$+\s*\]/)?.[0] || "";
       const name = entry.name.replace(pay, "").trim();
       const giver = entry.getFlag?.("forien-quest-log", "json")?.giverData?.name || "Unknown";
-      return `<div class="thm-market-row"><strong>${escapeHtml(name)}</strong><br><span class="thm-muted">Contact: ${escapeHtml(giver)}</span><button type="button" data-id="${entry.id}">${escapeHtml(pay || "View")}</button></div>`;
+      return `<div class="thm-mission-row">
+        <div class="thm-mission-copy"><strong>${escapeHtml(name)}</strong><br><span>Contact: ${escapeHtml(giver)}</span></div>
+        <div class="thm-mission-value">${escapeHtml(pay || "[ $ ]")}</div>
+        <button type="button" data-id="${entry.id}">View</button>
+      </div>`;
     }).join("") || `<p>No mission entries found.</p>`;
-    new Dialog({ title: "Mission Board", content: `<div class="thm-root thm-compact">${rows}</div>`, buttons: { close: { label: "Close" } }, render: html => html.find("button[data-id]").on("click", ev => game.journal.get(ev.currentTarget.dataset.id)?.sheet.render(true)) }, { ...dialogOptions(), width: 620 }).render(true);
+    const content = `<div class="thm-root thm-compact">
+      <h2 class="thm-center">Galactic Mission Board</h2>
+      <p>Welcome to the mission board! Where gigs are as unpredictable as a Rogue's hands in the dark.</p>
+      <p>If you're browsing here, you're either fearless, foolish, or both. Expect sketchy contracts, questionable payouts, and the kind of trust that comes with a big neon "NO REFUNDS" sign.</p>
+      <hr>
+      ${rows}
+    </div>`;
+    new Dialog({ title: "Mission Entries", content, buttons: { close: { label: "Close" } }, render: html => html.find("button[data-id]").on("click", ev => game.journal.get(ev.currentTarget.dataset.id)?.sheet.render(true)) }, { ...dialogOptions(), width: 620 }).render(true);
   }
 
   static showBountyBoard() {
     const rows = bountyRows();
-    const html = rows.map(row => `<li><b><span style="color:red;">[Wanted]</span> ${escapeHtml(row.name)}</b>${row.vehicle ? `<br>Vessel: ${escapeHtml(row.vehicle.name)}` : ""}<br>Bounty: ${formatGp(row.bounty)}</li>`).join("") || "<li>No active bounties.</li>";
+    const html = rows.map(row => {
+      const vessels = row.vessels.length
+        ? `<br>${row.vessels.map(vessel => `Vessel: ${escapeHtml(vessel.name)} (${formatGp(vessel.bounty)})`).join("<br>")}`
+        : `<br><span class="thm-muted">No vessel bounty source detected.</span>`;
+      return `<li><b><span style="color:red;">[Wanted]</span> ${escapeHtml(row.name)}</b>${vessels}<br><strong>Total Bounty:</strong> ${formatGp(row.bounty)}</li>`;
+    }).join("") || "<li>No active bounties.</li>";
     new Dialog({ title: "Bounty Board", content: `<div class="thm-root thm-compact"><ul>${html}</ul><i>Bounties are automatically paid upon destroying the target.</i></div>`, buttons: { close: { label: "Close" } } }).render(true);
   }
 
   static showPayBounties() {
     const rows = bountyRows();
     const total = rows.reduce((sum, row) => sum + row.bounty, 0);
-    const wantedActors = partyActors().filter(actor => actor.name.includes("[Wanted]"));
-    const options = [`<option value="all">Pay All Bounties</option>`].concat(wantedActors.map(actor => `<option value="${actor.id}">${actor.name}</option>`)).join("");
+    const options = [`<option value="all">Pay All Bounties</option>`].concat(rows.map(row => `<option value="${escapeHtml(row.key)}">${escapeHtml(row.name)}</option>`)).join("");
     new Dialog({
       title: "Crew Bounties",
       content: `<div class="thm-root thm-compact"><p>Clearing your name withdraws funds from TradeHub Capital.</p><select id="bounty-target">${options}</select><p id="bounty-cost"></p></div>`,
@@ -2754,7 +2826,8 @@ class HeroesForHirePage {
       render: html => {
         const update = () => {
           const id = html.find("#bounty-target").val();
-          const cost = id === "all" ? total : Math.floor(total / Math.max(1, wantedActors.length));
+          const row = rows.find(entry => entry.key === id);
+          const cost = id === "all" ? total : Number(row?.bounty || 0);
           html.find("#bounty-cost").html(`<strong>Cost:</strong> ${formatGp(cost)}<br><strong>TradeHub Capital After:</strong> ${formatGp(bankBalance() - cost)}`);
         };
         html.find("#bounty-target").on("change", update);
@@ -3435,30 +3508,16 @@ class Transactions {
 
 	  static async payBounties({ target }, userId) {
 	    const rows = bountyRows();
-	    const wantedActors = partyActors().filter(actor => actor.name.includes("[Wanted]"));
 	    const total = rows.reduce((sum, row) => sum + row.bounty, 0);
-	    const cost = target === "all" ? total : Math.floor(total / Math.max(1, wantedActors.length));
+	    const selected = rows.find(row => row.key === target);
+	    const cost = target === "all" ? total : Number(selected?.bounty || 0);
 	    if (cost > bankBalance()) throw new Error("Not enough TradeHub capital to clear that bounty.");
 	    await updateBank(bankBalance() - cost);
 	    if (target === "all") {
-	      for (const actor of wantedActors) await setActorWanted(actor, false);
-	      for (const row of rows) if (row.actor) await setActorWanted(row.actor, false);
-	      const vehicles = partyActors({ includeVehicles: true }).filter(actor => actor.type === "vehicle");
-	      for (const vehicle of vehicles) {
-	        const crew = clone(vehicle.system?.cargo?.crew || []);
-	        let changed = false;
-	        for (const member of crew) {
-	          if (member?.name?.includes("[Wanted]")) {
-	            member.name = member.name.replace(/\[Wanted\]\s*/g, "");
-	            changed = true;
-	          }
-	        }
-	        if (changed) await vehicle.update({ "system.cargo.crew": crew });
-	      }
+	      for (const row of rows) await clearWantedByKey(row.key);
 	    } else {
-	      const actor = game.actors.get(target);
-	      if (!actor) throw new Error("Selected wanted actor not found.");
-	      await setActorWanted(actor, false);
+	      if (!selected) throw new Error("Selected wanted bounty not found.");
+	      await clearWantedByKey(selected.key);
 	    }
 	    await ChatMessage.create({
 	      user: userId,

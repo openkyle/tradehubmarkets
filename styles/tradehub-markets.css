@@ -746,3 +746,42 @@
 .thm-heat-sink-card button {
   font-weight: 900;
 }
+
+.thm-mission-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 150px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.thm-mission-row:last-child {
+  border-bottom: 0;
+}
+
+.thm-mission-copy {
+  min-width: 0;
+  text-align: left;
+}
+
+.thm-mission-copy strong {
+  font-weight: 900;
+}
+
+.thm-mission-copy span {
+  color: #1c1c1c;
+  font-weight: 700;
+}
+
+.thm-mission-value {
+  min-width: 76px;
+  text-align: center;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.thm-mission-row button {
+  min-height: 38px;
+  font-weight: 900;
+}
