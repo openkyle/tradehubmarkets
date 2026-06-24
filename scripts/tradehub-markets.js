@@ -195,6 +195,14 @@ function registerSettings() {
     type: String,
     default: `modules/${MODULE_ID}/images/splashimage.webp`
   });
+  register("heroesForHireImage", {
+    name: "Heroes for Hire Banner Image",
+    hint: "16:9 banner image shown on the Heroes for Hire panel. GMs can set it from the H4H panel.",
+    scope: "world",
+    config: false,
+    type: String,
+    default: "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/Icons/H4H2.webp"
+  });
   register("dockSoundPath", {
     name: "Dock / Travel Sound File",
     hint: "Optional audio file path or URL played for all players when Dock / Travel is confirmed and Play Dock Sound is checked.",
@@ -826,6 +834,7 @@ async function processGmRequest(message) {
     if (message.action === "payBounties") return Transactions.payBounties(message.payload, message.userId);
     if (message.action === "shipJettison") return Transactions.shipJettison(message.payload, message.userId);
     if (message.action === "shipFuelPurge") return Transactions.shipFuelPurge(message.payload, message.userId);
+    if (message.action === "shipFuelScoop") return Transactions.shipFuelScoop(message.payload, message.userId);
     if (message.action === "applyCombatDamage") return Transactions.applyCombatDamage(message.payload, message.userId);
     if (message.action === "deployHeatSink") return Transactions.deployHeatSink(message.payload, message.userId);
     if (message.action === "declineHeatSink") return Transactions.declineHeatSink(message.payload, message.userId);
@@ -1887,6 +1896,11 @@ class CombatDamagePage {
         <label>Attack:</label><input type="number" id="fuel-attack-input" value="25">
         <label>Damage:</label><input type="number" id="fuel-damage-input" value="${rolls.damage ?? 0}" min="0">
         <label>Damage Module:</label><select id="fuel-target-module">${fuelModuleOptions}</select>
+        <div class="thm-fuel-scoop-grant">
+          <label>Hydrogen Fuel Scooped:</label>
+          <input type="number" id="fuel-scoop-input" value="${rolls.fuelYield ?? 0}" min="0">
+          <button type="button" id="fuel-scoop-add"><i class="fas fa-gas-pump"></i> Add Hydrogen Fuel</button>
+        </div>
       </section>
       <section class="thm-settings-section" data-tab-panel="mining">
         <p class="notes">Refinery takes this damage first when installed.<br>Only modules which are lower than the AC of the attack will be hit in the attack.</p>
@@ -1955,6 +1969,11 @@ class CombatDamagePage {
 	        };
 	        html.find("#repair-action").on("change", syncRepairBillingRow);
 	        syncRepairBillingRow();
+          html.find("#fuel-scoop-add").on("click", () => {
+            const quantity = Math.max(0, Number(html.find("#fuel-scoop-input").val() || 0));
+            if (!quantity) return ui.notifications.warn("Enter the Hydrogen Fuel amount scooped.");
+            requestGm("shipFuelScoop", { shipId: actor.id, quantity });
+          });
 	      }
     }, { ...dialogOptions(["combat-damage"]), width: 520 }).render(true);
   }
@@ -1966,9 +1985,22 @@ function lastAttackAndDamageRolls() {
     const rolls = message.rolls || (message.roll ? [message.roll] : []);
     return rolls[0] || null;
   };
-  const attack = messages.map(rollOf).find(roll => roll?.formula?.includes("1d20"));
-  const damage = messages.map(rollOf).find(roll => roll && !roll.formula?.includes("1d20"));
-  return { attack: attack?.total ?? null, damage: damage?.total ?? 0 };
+  const messageText = message => stripHtml(`${message.flavor || ""} ${message.content || ""}`);
+  const attackMessage = messages.find(message => rollOf(message)?.formula?.includes("1d20") && !/constitution saving throw/i.test(messageText(message)));
+  const fuelYieldMessage = messages.find(message => {
+    const roll = rollOf(message);
+    return roll && !roll.formula?.includes("1d20") && /other formula/i.test(messageText(message));
+  });
+  const damageMessage = messages.find(message => {
+    const roll = rollOf(message);
+    const text = messageText(message);
+    return roll && !roll.formula?.includes("1d20") && !/other formula|constitution saving throw/i.test(text);
+  });
+  return {
+    attack: rollOf(attackMessage)?.total ?? null,
+    damage: rollOf(damageMessage)?.total ?? 0,
+    fuelYield: rollOf(fuelYieldMessage)?.total ?? 0
+  };
 }
 
 function isEquippedShipModule(item) {
@@ -2515,7 +2547,12 @@ function isWantedName(name) {
 }
 
 function bountyKey(name) {
-  return wantedCleanName(name).toLowerCase();
+  return wantedCleanName(name)
+    .replace(/^(Admiral|Archbishop|Captain|Commander|Commodore|Doctor|Dr\.|Emperor|Empress|General|Governor|King|Lady|Lord|Marshal|President|Prince|Princess|Queen|Sergeant|Sir)\s+/i, "")
+    .replace(/\s*,\s*.*$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function vehicleBountyValue(vehicle) {
@@ -2600,6 +2637,8 @@ function bountyRows() {
       if (!isWantedName(member?.name)) continue;
       const row = ensureRow(member.name);
       if (!row) continue;
+      const crewName = wantedCleanName(member.name);
+      if (crewName.length > row.name.length) row.name = crewName;
       const bounty = vehicleBountyValue(vehicle);
       row.bounty += bounty;
       row.vessels.push({ name: vehicle.name, bounty });
@@ -2758,20 +2797,37 @@ class HeroesForHirePage {
     const notch = terms[Math.max(0, Math.min(terms.length - 1, Math.floor(nums.length / 10)))] || "Virtual Nobodies";
     const fans = parseNumber(stripHtml(pageText(h4hPage("Fans", false)))).toLocaleString();
     const bounties = bountyRows();
+    const banner = setting("heroesForHireImage") || "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/Icons/H4H2.webp";
     const content = `<div class="thm-root thm-compact thm-center">
       <div class="thm-green" style="font-size:2em;font-weight:bold;">${escapeHtml(groupName)}</div>
+      <div class="thm-h4h-banner">
+        <img src="${escapeHtml(banner)}" alt="Heroes for Hire">
+        ${game.user.isGM ? `<button type="button" id="h4h-image-picker" title="Set Heroes for Hire image"><i class="fas fa-folder-open"></i></button>` : ""}
+      </div>
       <div style="font-size:1.25em;">${escapeHtml(notch)}</div>
       <div class="thm-green">Capital: ${formatGp(bankBalance())}</div>
       <div>${[1, 2, 3, 4, 5].map(i => `<span style="font-size:24px;color:${i <= average ? "goldenrod" : "black"};">${i <= average ? "★" : "•"}</span>`).join("")}</div>
       <div>${nums.length.toLocaleString()} personal bonds</div>
       <div>${fans} loyal followers</div>
-      <div class="thm-actions"><button id="view-ratings">View Relationships</button><button id="mission-board">Mission Board</button><button id="bounty-board">Bounty Board</button>${bounties.length ? `<button id="clear-bounty">Pay Bounty / Clear Name</button>` : ""}</div>
+      <div class="thm-h4h-actions"><button id="view-ratings">View Relationships</button><button id="mission-board">Mission Board</button><button id="bounty-board">Bounty Board</button>${bounties.length ? `<button id="clear-bounty">Pay Bounty / Clear Name</button>` : ""}</div>
     </div>`;
     new Dialog({
       title: "Heroes for Hire",
       content,
       buttons: { close: { label: "Close" } },
       render: html => {
+        html.find("#h4h-image-picker").on("click", () => {
+          new FilePicker({
+            type: "image",
+            current: setting("heroesForHireImage") || "",
+            callback: async path => {
+              await setSetting("heroesForHireImage", path);
+              ui.notifications.info("Heroes for Hire image updated.");
+              html.closest(".app").find(".close").click();
+              HeroesForHirePage.show();
+            }
+          }).render(true);
+        });
         html.find("#view-ratings").on("click", () => new Dialog({ title: "Relationships", content: `<div class="thm-root thm-compact">${ratings.map(escapeHtml).join("<br><br>") || "No relationships recorded."}</div>`, buttons: { close: { label: "Close" } } }).render(true));
         html.find("#mission-board").on("click", () => this.showMissionBoard());
         html.find("#bounty-board").on("click", () => this.showBountyBoard());
@@ -2808,11 +2864,15 @@ class HeroesForHirePage {
     const rows = bountyRows();
     const html = rows.map(row => {
       const vessels = row.vessels.length
-        ? `<br>${row.vessels.map(vessel => `Vessel: ${escapeHtml(vessel.name)} (${formatGp(vessel.bounty)})`).join("<br>")}`
-        : `<br><span class="thm-muted">No vessel bounty source detected.</span>`;
-      return `<li><b><span style="color:red;">[Wanted]</span> ${escapeHtml(row.name)}</b>${vessels}<br><strong>Total Bounty:</strong> ${formatGp(row.bounty)}</li>`;
-    }).join("") || "<li>No active bounties.</li>";
-    new Dialog({ title: "Bounty Board", content: `<div class="thm-root thm-compact"><ul>${html}</ul><i>Bounties are automatically paid upon destroying the target.</i></div>`, buttons: { close: { label: "Close" } } }).render(true);
+        ? row.vessels.map(vessel => `<div>Vessel: ${escapeHtml(vessel.name)} (${formatGp(vessel.bounty)})</div>`).join("")
+        : `<div class="thm-muted">No vessel bounty source detected.</div>`;
+      return `<div class="thm-bounty-row">
+        <div class="thm-bounty-title"><span>[Wanted]</span> ${escapeHtml(row.name)}</div>
+        <div class="thm-bounty-sources">${vessels}</div>
+        <div><strong>Total Bounty:</strong> ${formatGp(row.bounty)}</div>
+      </div>`;
+    }).join("") || `<div class="thm-bounty-row">No active bounties.</div>`;
+    new Dialog({ title: "Bounty Board", content: `<div class="thm-root thm-compact"><div class="thm-bounty-list">${html}</div><p class="thm-bounty-note"><i>Bounties are automatically paid upon destroying the target.</i></p></div>`, buttons: { close: { label: "Close" } } }).render(true);
   }
 
   static showPayBounties() {
@@ -2855,32 +2915,47 @@ class FinesPage {
       { crime: "Smuggling", section: `Decree 10-6 of ${loc}`, fine: 2000 },
       { crime: "Forgery", section: `Statute 2-8 of ${loc}`, fine: 1200 },
       { crime: "Custom", section: "Custom Entry", fine: 0 }
-    ];
-    const actors = partyActors().sort((a, b) => a.name.localeCompare(b.name));
-    const content = `<div class="thm-root thm-compact">
-      <label>Player:</label><select id="fine-player">${actors.map(actor => `<option value="${actor.id}">${actor.name}</option>`).join("")}</select>
-      <label>Crime:</label><select id="fine-crime">${crimes.map(c => `<option value="${escapeHtml(c.crime)}">${escapeHtml(c.crime)}</option>`).join("")}</select>
-      <label>Crime Description:</label><input type="text" id="fine-description">
-      <label>Fine Amount (GP):</label><input type="number" id="fine-amount" min="0">
-    </div>`;
+	    ];
+	    const selectedActor = canvas.tokens?.controlled?.[0]?.actor;
+	    const actors = partyActors().sort((a, b) => a.name.localeCompare(b.name));
+	    const ownerLevel = CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? CONST.DOCUMENT_PERMISSION_LEVELS.OWNER;
+	    const playerOwned = actors.filter(actor => game.users.contents.some(user => !user.isGM && Number(actor.ownership?.[user.id] || 0) >= ownerLevel));
+	    const playerOwnedIds = new Set(playerOwned.map(actor => actor.id));
+	    const others = actors.filter(actor => !playerOwnedIds.has(actor.id));
+	    const actorOption = actor => `<option value="${actor.id}" ${selectedActor?.id === actor.id ? "selected" : ""}>${escapeHtml(actor.name)}</option>`;
+	    const actorOptions = `${playerOwned.length ? `<optgroup label="Player-Owned Tokens">${playerOwned.map(actorOption).join("")}</optgroup>` : ""}${others.length ? `<optgroup label="Other Tokens">${others.map(actorOption).join("")}</optgroup>` : ""}`;
+	    const content = `<div class="thm-root thm-compact thm-fines-form">
+	      <label for="fine-search">Search:</label><input type="text" id="fine-search" placeholder="Type token name">
+	      <label for="fine-player">Token:</label><select id="fine-player">${actorOptions}</select>
+	      <label for="fine-crime">Crime:</label><select id="fine-crime">${crimes.map(c => `<option value="${escapeHtml(c.crime)}">${escapeHtml(c.crime)}</option>`).join("")}</select>
+	      <label for="fine-description">Crime Description:</label><input type="text" id="fine-description">
+	      <label for="fine-amount">Fine Amount (GP):</label><input type="number" id="fine-amount" min="0">
+	    </div>`;
     new Dialog({
       title: "Report Crime",
       content,
       buttons: { report: { icon: `<i class="fas fa-check"></i>`, label: "Report", callback: html => this.report(html, crimes, loc) }, cancel: { label: "Cancel" } },
       default: "report",
-      render: html => {
-        const sync = () => {
-          const actor = game.actors.get(html.find("#fine-player").val());
-          const selected = actor?.name.includes("[Wanted]") ? "Remove [Wanted]" : "Mark as [Wanted]";
+	      render: html => {
+	        const selectMatchingToken = () => {
+	          const term = String(html.find("#fine-search").val() || "").trim().toLowerCase();
+	          if (!term) return;
+	          const match = actors.find(actor => actor.name.toLowerCase().includes(term));
+	          if (match) html.find("#fine-player").val(match.id).trigger("change");
+	        };
+	        const sync = () => {
+	          const actor = game.actors.get(html.find("#fine-player").val());
+	          const selected = actor?.name.includes("[Wanted]") ? "Remove [Wanted]" : "Mark as [Wanted]";
           if (["Mark as [Wanted]", "Remove [Wanted]"].includes(html.find("#fine-crime").val())) html.find("#fine-crime").val(selected);
           const crime = crimes.find(c => c.crime === html.find("#fine-crime").val()) || crimes[0];
           html.find("#fine-description").val(crime.crime === "Custom" ? "" : crime.crime).prop("readonly", crime.crime !== "Custom");
-          html.find("#fine-amount").val(crime.fine);
-        };
-        html.find("#fine-player, #fine-crime").on("change", sync);
-        sync();
-      }
-    }, { ...dialogOptions(), width: 520 }).render(true);
+	          html.find("#fine-amount").val(crime.fine);
+	        };
+	        html.find("#fine-search").on("input", selectMatchingToken);
+	        html.find("#fine-player, #fine-crime").on("change", sync);
+	        sync();
+	      }
+	    }, { ...dialogOptions(), width: 560 }).render(true);
   }
 
   static async report(html, crimes, loc) {
@@ -3567,6 +3642,34 @@ class Transactions {
     await ChatMessage.create({
       user: userId,
       content: `<strong>${ship.name}</strong><br>${amount} tonnes of Hydrogen purged.${remaining <= 0 ? `<br><span style="color:red;font-weight:bold;">WARNING: OUT OF FUEL</span>` : ""}`
+    });
+    const data = getData();
+    syncShipDirectory(data);
+    await setSetting("data", data);
+    broadcastRefresh();
+  }
+
+  static async shipFuelScoop({ shipId, quantity }, userId) {
+    const ship = game.actors.get(shipId);
+    if (!ship) throw new Error("Selected ship not found.");
+    const amount = Math.floor(Math.max(0, Number(quantity || 0)));
+    if (!amount) throw new Error("Enter the Hydrogen Fuel amount scooped.");
+    const hydrogen = (await getTradeGoods()).find(item => item.name.toLowerCase() === "hydrogen fuel");
+    if (!hydrogen) throw new Error("Hydrogen Fuel was not found in the configured Trade Goods compendium and folder.");
+    const addedWeight = amount * Number(hydrogen.weight || 0);
+    const stats = cargoStats(ship);
+    if (stats.current + addedWeight > stats.max) throw new Error("Insufficient cargo capacity for the scooped Hydrogen Fuel.");
+    const existing = ship.items.find(item => item.name.toLowerCase() === "hydrogen fuel" && ["loot", "consumable"].includes(item.type));
+    if (existing) await existing.update({ "system.quantity": Number(existing.system?.quantity || 0) + amount });
+    else {
+      const source = await fromUuid(hydrogen.uuid);
+      const itemData = duplicateDoc(source);
+      foundry.utils.setProperty(itemData, "system.quantity", amount);
+      await ship.createEmbeddedDocuments("Item", [itemData]);
+    }
+    await ChatMessage.create({
+      user: userId,
+      content: `<strong>Fuel Scooping Complete</strong><br><strong>${ship.name}</strong> gained Hydrogen Fuel x${amount}.<br><span class="thm-muted">Constitution save results are not applied by TradeHub.</span>`
     });
     const data = getData();
     syncShipDirectory(data);
