@@ -3669,7 +3669,7 @@ class Transactions {
     }
     await ChatMessage.create({
       user: userId,
-      content: `<strong>Fuel Scooping Complete</strong><br><strong>${ship.name}</strong> gained Hydrogen Fuel x${amount}.<br><span class="thm-muted">Constitution save results are not applied by TradeHub.</span>`
+      content: `<strong>Fuel Scooping Complete</strong><br><strong>${ship.name}</strong> gained Hydrogen Fuel x${amount}.`
     });
     const data = getData();
     syncShipDirectory(data);
