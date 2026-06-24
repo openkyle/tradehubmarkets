@@ -20,9 +20,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cp tradehub-markets.zip latest.zip
           if gh release view latest >/dev/null 2>&1; then
             gh release edit latest --title "TradeHubMarkets" --notes "Latest TradeHub Markets release."
-            gh release upload latest module.json tradehub-markets.zip --clobber
+            gh release upload latest module.json tradehub-markets.zip latest.zip --clobber
           else
-            gh release create latest module.json tradehub-markets.zip --title "TradeHubMarkets" --notes "Latest TradeHub Markets release." --latest
+            gh release create latest module.json tradehub-markets.zip latest.zip --title "TradeHubMarkets" --notes "Latest TradeHub Markets release." --latest
           fi

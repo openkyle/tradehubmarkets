@@ -3,10 +3,10 @@
   "name": "tradehub-markets",
   "title": "TradeHub Markets",
   "description": "Compendium-backed multi-player markets, docking, cargo trading, supply restock, vehicle repair, and shipyard services for Foundry VTT v11 / DnD5e 2.4.1.",
-  "version": "1.0.58",
+  "version": "1.0.59",
   "authors": [
     {
-      "name": "edgedoggo"
+      "name": "openkyle"
     }
   ],
   "compatibility": {
@@ -33,6 +33,6 @@
     }
   ],
   "socket": true,
-  "manifest": "https://github.com/edgedoggo/tradehubmarkets/releases/latest/download/module.json",
-  "download": "https://github.com/edgedoggo/tradehubmarkets/releases/latest/download/tradehub-markets.zip"
+  "manifest": "https://github.com/openkyle/tradehubmarkets/releases/latest/download/module.json",
+  "download": "https://github.com/openkyle/tradehubmarkets/releases/latest/download/tradehub-markets.zip"
 }
