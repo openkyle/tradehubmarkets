@@ -1982,10 +1982,11 @@ class CombatDamagePage {
 function lastAttackAndDamageRolls() {
   const messages = Array.from(game.messages?.contents || []).slice().reverse();
   const rollOf = message => {
+    if (!message) return null;
     const rolls = message.rolls || (message.roll ? [message.roll] : []);
     return rolls[0] || null;
   };
-  const messageText = message => stripHtml(`${message.flavor || ""} ${message.content || ""}`);
+  const messageText = message => message ? stripHtml(`${message.flavor || ""} ${message.content || ""}`) : "";
   const attackMessage = messages.find(message => rollOf(message)?.formula?.includes("1d20") && !/constitution saving throw/i.test(messageText(message)));
   const fuelYieldMessage = messages.find(message => {
     const roll = rollOf(message);
