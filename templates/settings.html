@@ -63,6 +63,33 @@
         <button type="button" data-file-picker data-target="starportLoadSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
       </div>
     </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Forien Show to Players Sound</span>
+        <small>Add a sound to Forien's Show to Players popup.</small>
+      </label>
+      <input type="checkbox" name="forienShowSoundEnabled" {{#if settings.forienShowSoundEnabled}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Forien Popup Sound File</span>
+        <small>Audio file or URL played for all players when a quest is shown.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="forienShowSoundPath" value="{{settings.forienShowSoundPath}}">
+        <button type="button" data-file-picker data-target="forienShowSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Forien Popup Volume</span>
+        <small>Volume for the Show to Players sound.</small>
+      </label>
+      <div class="thm-slider-control">
+        <input type="range" name="forienShowSoundVolume" value="{{settings.forienShowSoundVolume}}" min="0" max="1" step="0.05" data-volume-output="forienShowSoundVolumeValue">
+        <output id="forienShowSoundVolumeValue">{{settings.forienShowSoundVolume}}</output>
+      </div>
+    </div>
     <div class="thm-settings-row">
       <label>
         <span>Vehicle Label</span>

@@ -483,6 +483,18 @@
   align-items: center;
 }
 
+.thm-slider-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px;
+  gap: 10px;
+  align-items: center;
+}
+
+.thm-slider-control output {
+  text-align: right;
+  font-weight: 900;
+}
+
 .thm-folder-row {
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);

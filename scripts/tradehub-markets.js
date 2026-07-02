@@ -69,7 +69,31 @@ Hooks.once("ready", async () => {
     await setSetting("data", data);
   }
   if (game.user.isGM && setting("showGmBar")) GmBar.render();
+  installForienShowSoundHook();
 });
+
+function installForienShowSoundHook() {
+  if (!game.user.isGM || window.__tradeHubForienShowSoundHook) return;
+  window.__tradeHubForienShowSoundHook = true;
+  let lastPlayed = 0;
+  document.addEventListener("click", event => {
+    const control = event.target?.closest?.("a, button");
+    if (!control || !setting("forienShowSoundEnabled")) return;
+    const text = `${control.title || ""} ${control.getAttribute("aria-label") || ""} ${control.textContent || ""}`;
+    if (!/show\s*to\s*players/i.test(text)) return;
+    const app = control.closest(".app");
+    const title = app?.querySelector(".window-title")?.textContent || app?.textContent || "";
+    const isQuestWindow = /quest\s*details|quest/i.test(title) || /forien/i.test(app?.className || "");
+    if (!isQuestWindow) return;
+    const path = setting("forienShowSoundPath");
+    if (!path) return;
+    const now = Date.now();
+    if (now - lastPlayed < 1200) return;
+    lastPlayed = now;
+    const volume = Math.max(0, Math.min(1, Number(setting("forienShowSoundVolume") ?? 0.8)));
+    AudioHelper.play({ src: path, volume, autoplay: true, loop: false }, true);
+  }, true);
+}
 
 Hooks.on("renderChatMessage", (message, html) => {
   html.find("[data-thm-heat-sink], [data-thm-heat-sink-no]").on("click", ev => {
@@ -218,6 +242,30 @@ function registerSettings() {
     config: false,
     type: String,
     default: ""
+  });
+  register("forienShowSoundEnabled", {
+    name: "Forien Show to Players Sound",
+    hint: "Play a configured sound for all players when a Forien quest is shown to players.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  register("forienShowSoundPath", {
+    name: "Forien Show to Players Sound File",
+    hint: "Audio file or URL played when the Forien quest log Show to Players control is clicked.",
+    scope: "world",
+    config: false,
+    type: String,
+    default: ""
+  });
+  register("forienShowSoundVolume", {
+    name: "Forien Show to Players Sound Volume",
+    hint: "Volume for the Forien Show to Players sound, from 0 to 1.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 0.8
   });
   register("bankActorName", { name: "Bank Actor Name", scope: "world", config: false, type: String, default: "Bank of Holding" });
   register("bankFolderName", { name: "Bank Actor Folder", scope: "world", config: false, type: String, default: "Party" });
@@ -2049,6 +2097,120 @@ async function updateModuleHp(item, hp) {
   await item.update({ "system.hp.value": Math.max(0, Number(hp || 0)) });
 }
 
+function actorSceneTokens(actor) {
+  if (!actor || !canvas?.tokens?.placeables) return [];
+  return canvas.tokens.placeables.filter(token => token?.actor?.id === actor.id || token?.document?.actorId === actor.id);
+}
+
+async function withActorTokensSelected(actor, callback) {
+  if (!game.modules?.get("tokenmagic")?.active || !globalThis.TokenMagic || !canvas?.tokens) return false;
+  const tokens = actorSceneTokens(actor);
+  if (!tokens.length) return false;
+  const previouslyControlled = [...(canvas.tokens.controlled || [])];
+  canvas.tokens.releaseAll();
+  for (const token of tokens) token.control({ releaseOthers: false });
+  try {
+    await callback(tokens);
+  } finally {
+    canvas.tokens.releaseAll();
+    for (const token of previouslyControlled) {
+      if (token?.scene === canvas.scene) token.control({ releaseOthers: false });
+    }
+  }
+  return true;
+}
+
+function shieldEffectColors(shield) {
+  const type = String((shield?.name || "").match(/\[(.*?)\]/)?.[1] || "").trim().toUpperCase();
+  if (type === "A") return { val1: 0xe60000, val2: 0xff5050 };
+  if (type === "B") return { val1: 0x5099DD, val2: 0x90EEFF };
+  if (type === "C") return { val1: 0x00cc66, val2: 0x99ff33 };
+  if (type === "D") return { val1: 0xffff00, val2: 0xffff99 };
+  if (type === "PRISMATIC") return { val1: 0x9999ff, val2: 0xff00ff };
+  return { val1: 0x5099DD, val2: 0x90EEFF };
+}
+
+async function removeShieldTokenEffect(actor) {
+  await withActorTokensSelected(actor, async () => {
+    await TokenMagic.deleteFiltersOnSelected("superSpookyGlow");
+  });
+}
+
+async function activateShieldTokenEffect(actor) {
+  const shield = findShipModule(actor, /shield generator|shield/i);
+  if (!shield || itemHp(shield) <= 0) return;
+  const colorParams = shieldEffectColors(shield);
+  const params = [{
+    filterType: "glow",
+    filterId: "superSpookyGlow",
+    outerStrength: 6,
+    innerStrength: 0,
+    color: 0x5099DD,
+    quality: 0.5,
+    padding: 10,
+    animated: {
+      color: {
+        active: "active",
+        loopDuration: 3000,
+        animType: "colorOscillation",
+        val1: colorParams.val1,
+        val2: colorParams.val2
+      }
+    }
+  }];
+  await withActorTokensSelected(actor, async () => {
+    await TokenMagic.addUpdateFiltersOnSelected(params);
+  });
+}
+
+async function applyDamageTokenEffect(actor) {
+  const params = [{
+    filterType: "splash",
+    filterId: "mySplash",
+    rank: 5,
+    color: 0x808080,
+    padding: 80,
+    time: Math.random() * 1000,
+    seed: Math.random(),
+    splashFactor: 1,
+    spread: 0.2,
+    blend: 1,
+    dimX: 1,
+    dimY: 1,
+    cut: false,
+    textureAlphaBlend: true,
+    anchorX: 0.32 + (Math.random() * 0.36),
+    anchorY: 0.32 + (Math.random() * 0.36)
+  }];
+  await withActorTokensSelected(actor, async () => {
+    if (TokenMagic.addFiltersOnSelected) await TokenMagic.addFiltersOnSelected(params);
+    else await TokenMagic.addUpdateFiltersOnSelected(params);
+  });
+}
+
+async function clearShipTokenEffects(actor) {
+  const astrumFolder = "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/CharTokens/AstrumKnights/";
+  const playersFolder = "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/CharTokens/Players/";
+  const tokens = actorSceneTokens(actor);
+  for (const token of tokens) {
+    await token.document.update({ "light.alpha": 0 });
+    const currentImg = token.document.texture?.src || "";
+    if (currentImg.startsWith(astrumFolder)) {
+      const extension = currentImg.split(".").pop();
+      const sanitizedName = actor.name.replace(/\s+/g, "");
+      await token.document.update({ img: `${playersFolder}${sanitizedName}.${extension}` });
+    }
+  }
+  await withActorTokensSelected(actor, async () => {
+    await TokenMagic.deleteFiltersOnSelected();
+  });
+}
+
+async function refreshShipTokenEffects(actor) {
+  await clearShipTokenEffects(actor);
+  await activateShieldTokenEffect(actor);
+}
+
 function heatSinkChoiceCard({ actor, amount, reason, extra = "", attack = 0, damageType = "thermal", mode = "carryover" }) {
   const attrs = `data-actor-id="${actor.id}" data-amount="${Number(amount || 0)}" data-reason="${escapeHtml(reason)}" data-extra="${escapeHtml(extra)}" data-attack="${Number(attack || 0)}" data-damage-type="${escapeHtml(damageType)}" data-mode="${escapeHtml(mode)}"`;
   const prompt = mode === "cargo"
@@ -2088,6 +2250,7 @@ async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = 
   const destroyedDetails = [];
   const prompts = [];
   const modules = damageableModules(actor);
+  let tokenDamageEffect = false;
   let pool = modules.filter(module => itemHp(module) > 0 && itemAc(module) <= Number(attack || 0) && !/shield generator/i.test(module.name));
   if (!pool.length) {
     details.push(`<span class="thm-muted">No vulnerable modules were hit by AC ${attack || "N/A"}.</span>`);
@@ -2115,6 +2278,7 @@ async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = 
     for (const module of modules) {
       const dealt = Number(allocations.get(module.id) || 0);
       if (dealt <= 0) continue;
+      tokenDamageEffect = true;
       const before = itemHp(module);
       const after = Math.max(0, before - dealt);
       await updateModuleHp(module, after);
@@ -2131,6 +2295,7 @@ async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = 
     }
   }
   const totalHp = await syncVehicleHpFromModules(actor);
+  if (tokenDamageEffect) await applyDamageTokenEffect(actor);
   return {
     details: details.concat(destroyedDetails.length ? ["", ...destroyedDetails] : []),
     prompts,
@@ -2188,6 +2353,7 @@ async function makeShipPristine(actor, { chat = true, reason = "Manual pristine 
     "system.details.source.custom": `Module Value: ${Math.floor(summary.moduleValue).toLocaleString()} GP`,
     "system.details.biography.public": publicBio
   });
+  await refreshShipTokenEffects(actor);
   if (chat) {
     await ChatMessage.create({
       user: userId,
@@ -2260,6 +2426,7 @@ async function fullServiceRepair(actor, { billCapital = true } = {}) {
   if (billCapital) await updateBank(bankBalance() - preview.total);
   for (const entry of preview.repairs) await updateModuleHp(entry.item, itemMaxHp(entry.item));
   const summary = await syncVehicleStatsFromModules(actor, { reason: "Full Service Repair and Replace", notify: false });
+  await refreshShipTokenEffects(actor);
   const rows = preview.repairs
     .sort((a, b) => b.cost - a.cost)
     .map(entry => `${entry.item.name}: ${entry.missing} HP restored (${billCapital ? formatGp(entry.cost) : `${formatGp(entry.cost)} waived`}${preview.insured ? `, Glaxon value ${formatGp(entry.rawCost)}` : ""})`);
@@ -2335,6 +2502,9 @@ class TradeHubSettingsForm extends FormApplication {
         adFolder: setting("adFolder") || "",
         dockSoundPath: setting("dockSoundPath") || "",
         starportLoadSoundPath: setting("starportLoadSoundPath") || "",
+        forienShowSoundEnabled: !!setting("forienShowSoundEnabled"),
+        forienShowSoundPath: setting("forienShowSoundPath") || "",
+        forienShowSoundVolume: Number(setting("forienShowSoundVolume") ?? 0.8).toFixed(2),
         vehicleLabel: setting("vehicleLabel") || "Vessel",
         repairCostPerHp: Number(setting("repairCostPerHp") || 0),
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
@@ -2399,6 +2569,9 @@ class TradeHubSettingsForm extends FormApplication {
         callback: path => input.val(path)
       }).render(true);
     });
+    html.find("[data-volume-output]").on("input change", ev => {
+      html.find(`#${ev.currentTarget.dataset.volumeOutput}`).text(Number(ev.currentTarget.value || 0).toFixed(2));
+    });
     html.find("[data-open-news]").on("click", async ev => {
       const doc = await fromUuid(ev.currentTarget.dataset.openNews);
       doc?.sheet?.render(true);
@@ -2412,9 +2585,11 @@ class TradeHubSettingsForm extends FormApplication {
       "ammoRestockPack", "ammoRestockFolderPath",
       "vehicleConsumablesPack", "vehicleConsumablesFolderPath",
       "shipyardPack", "shipyardFolderPath",
-      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "vehicleLabel"
+      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "forienShowSoundPath", "vehicleLabel"
     ];
     for (const key of keys) await setSetting(key, formData[key] ?? "");
+    await setSetting("forienShowSoundEnabled", !!formData.forienShowSoundEnabled);
+    await setSetting("forienShowSoundVolume", Math.max(0, Math.min(1, Number(formData.forienShowSoundVolume ?? 0.8))));
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
     await setSetting("stockMin", Number(formData.stockMin || 0));
@@ -3170,6 +3345,7 @@ class Transactions {
     await updateBank(bankBalance() - total);
     for (const entry of repairs) await entry.item.update({ "system.hp.value": Number(entry.hp.max || entry.hp.value || 0) });
     const actorHp = await syncVehicleHpFromModules(ship);
+    await refreshShipTokenEffects(ship);
 	    const rows = repairs.map(entry => `${entry.item.name}: ${entry.missing} HP restored (${formatGp(entry.cost)}${isGlaxonInsured(ship) ? `, Glaxon value ${formatGp(entry.rawCost)}` : ""})`).join("<br>");
 	    const rawTotal = repairs.reduce((sum, entry) => sum + entry.rawCost, 0);
 	    const insuranceLine = isGlaxonInsured(ship) ? `<br><strong>Glaxon Insurance:</strong> Active, savings ${formatGp(rawTotal - total)}` : "";
@@ -3235,6 +3411,7 @@ class Transactions {
     const details = [];
     const destroyedDetails = [];
     const heatSinkPrompts = [];
+    let tokenDamageEffect = false;
 
     const offerHeatSink = async (amount, reason, extra = "") => {
       if (amount <= 0) return false;
@@ -3255,6 +3432,11 @@ class Transactions {
       await updateModuleHp(module, after);
       const line = after <= 0 ? `<b>${module.name} hit for ${dealt} HP and is destroyed!</b>` : `${module.name} hit for ${dealt} HP`;
       (after <= 0 ? destroyedDetails : details).push(line);
+      if (/shield generator/i.test(module.name || "")) {
+        if (before > 0 && after <= 0) await removeShieldTokenEffect(actor);
+      } else {
+        tokenDamageEffect = true;
+      }
       return amount - dealt;
     };
 
@@ -3295,6 +3477,7 @@ class Transactions {
       for (const module of modules) {
         const dealt = Number(allocations.get(module.id) || 0);
         if (dealt <= 0) continue;
+        tokenDamageEffect = true;
         const before = itemHp(module);
         const after = Math.max(0, before - dealt);
         await updateModuleHp(module, after);
@@ -3342,7 +3525,10 @@ class Transactions {
         await updateModuleHp(shield, before - dealt);
         details.push(`${shield.name} hit for ${dealt} HP`);
         remaining -= dealt;
-        if (itemHp(shield) <= 0) details.push(`<b>${shield.name} is depleted! Shields are down!</b>`);
+        if (itemHp(shield) <= 0) {
+          details.push(`<b>${shield.name} is depleted! Shields are down!</b>`);
+          await removeShieldTokenEffect(actor);
+        }
         if (remaining > 0) await applyCarryover(remaining, shield.name);
       } else {
         const selected = payload.targetModule && payload.targetModule !== "evenly" ? actor.items.get(payload.targetModule) : null;
@@ -3360,6 +3546,7 @@ class Transactions {
     }
 
     const totalHp = await syncVehicleHpFromModules(actor);
+    if (tokenDamageEffect) await applyDamageTokenEffect(actor);
     if (totalHp <= 0) destroyedDetails.push(`<b style="color:red;">${actor.name} explodes into a ball of fiery force!</b>`);
     const label = thermal ? "Thermal" : "Hull";
     const damageLines = details
@@ -3402,6 +3589,7 @@ class Transactions {
         });
       } else {
         const totalHp = await syncVehicleHpFromModules(actor);
+        await refreshShipTokenEffects(actor);
         await ChatMessage.create({
           user: userId,
           content: `<b style="color:green;">SUCCESS: MODULES REPAIRED!</b><br><b>${actor.name}</b><br><b>Modules Repaired:</b><br>${result.details.join("<br>")}<br><b>Total HP Restored:</b> ${result.added}<br><b>${setting("vehicleLabel")} HP:</b> ${totalHp}`,
@@ -3524,6 +3712,7 @@ class Transactions {
     const modules = damageableModules(ship).filter(item => !/shield generator/i.test(item.name));
     const totalModuleHp = modules.reduce((total, item) => total + Number(item.system?.hp?.value || 0), 0);
     await ship.update({ "system.attributes.hp.min": totalModuleHp });
+    await refreshShipTokenEffects(ship);
     if (unpaid > 0) {
       await ChatMessage.create({
 	      content: `Long rest costs of ${formatGp(unpaid)} were not fully paid. During the next adventuring day, equipment or insurance service may fail unexpectedly at the GM's discretion.`,
