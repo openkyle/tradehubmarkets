@@ -1269,7 +1269,7 @@ class RepairShipPage {
     if (!ship) return ui.notifications.error(`No ${setting("vehicleLabel").toLowerCase()} selected.`);
     const vehicleLabel = setting("vehicleLabel") || "Ship";
     const insured = isGlaxonInsured(ship);
-    const modules = damageableModules(ship).sort((a, b) => hpPct(a) - hpPct(b));
+    const modules = repairableModules(ship).sort((a, b) => hpPct(a) - hpPct(b));
     const rows = modules.map(item => {
       const hp = item.system?.hp || {};
       const value = Number(hp.value ?? 0);
@@ -2056,8 +2056,20 @@ function isEquippedShipModule(item) {
   return ["equipment", "weapon"].includes(item?.type) && item?.system?.equipped === true;
 }
 
+function isShipModuleItem(item) {
+  return ["equipment", "weapon"].includes(item?.type) && itemMaxHp(item) > 0;
+}
+
+function wasTradeHubDestroyed(item) {
+  return !!item?.getFlag?.(MODULE_ID, "destroyedUnequipped");
+}
+
 function damageableModules(actor) {
   return actor.items.filter(item => isEquippedShipModule(item) && itemMaxHp(item) > 0);
+}
+
+function repairableModules(actor) {
+  return actor.items.filter(item => isShipModuleItem(item) && (isEquippedShipModule(item) || wasTradeHubDestroyed(item)));
 }
 
 function itemMaxHp(item) {
@@ -2094,7 +2106,23 @@ async function consumeHeatSink(actor) {
 }
 
 async function updateModuleHp(item, hp) {
-  await item.update({ "system.hp.value": Math.max(0, Number(hp || 0)) });
+  const value = Math.max(0, Number(hp || 0));
+  const update = { "system.hp.value": value };
+  if (value <= 0 && isEquippedShipModule(item)) {
+    update["system.equipped"] = false;
+    update[`flags.${MODULE_ID}.destroyedUnequipped`] = true;
+  }
+  await item.update(update);
+}
+
+async function restoreModuleHp(item, hp = itemMaxHp(item)) {
+  const value = Math.max(0, Number(hp || 0));
+  const update = { "system.hp.value": value };
+  if (value > 0 && wasTradeHubDestroyed(item)) {
+    update["system.equipped"] = true;
+    update[`flags.${MODULE_ID}.destroyedUnequipped`] = false;
+  }
+  await item.update(update);
 }
 
 function actorSceneTokens(actor) {
@@ -2334,9 +2362,12 @@ function shipStatSummary(actor) {
 async function makeShipPristine(actor, { chat = true, reason = "Manual pristine refresh", userId = game.user.id } = {}) {
   if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
   const beforeHp = Number(actor.system?.attributes?.hp?.max || 0);
+  for (const item of repairableModules(actor)) {
+    await restoreModuleHp(item, itemMaxHp(item));
+  }
   const summary = shipStatSummary(actor);
   for (const item of summary.modules) {
-    await item.update({ "system.hp.value": itemMaxHp(item) });
+    await restoreModuleHp(item, itemMaxHp(item));
   }
   const publicBio = [
     `HP Adjusted from ${beforeHp} HP to ${summary.totalMaxHp} HP`,
@@ -2406,7 +2437,7 @@ function scheduleVehicleStatSync(actor, reason) {
 }
 
 function fullServiceRepairPreview(actor) {
-  const repairs = damageableModules(actor).map(item => {
+  const repairs = repairableModules(actor).map(item => {
     const missing = Math.max(0, itemMaxHp(item) - itemHp(item));
     const rawCost = missing * repairUnitCost(item);
     return { item, missing, rawCost, cost: repairCostForItem(item, missing, actor) };
@@ -2424,7 +2455,7 @@ async function fullServiceRepair(actor, { billCapital = true } = {}) {
   if (!preview.repairs.length) return { ...preview, totalHp: currentModuleHpTotal(actor), rows: [] };
   if (billCapital && bankBalance() < preview.total) throw new Error(`Not enough TradeHub capital for full service repair. Required: ${formatGp(preview.total)}; Available: ${formatGp(bankBalance())}.`);
   if (billCapital) await updateBank(bankBalance() - preview.total);
-  for (const entry of preview.repairs) await updateModuleHp(entry.item, itemMaxHp(entry.item));
+  for (const entry of preview.repairs) await restoreModuleHp(entry.item, itemMaxHp(entry.item));
   const summary = await syncVehicleStatsFromModules(actor, { reason: "Full Service Repair and Replace", notify: false });
   await refreshShipTokenEffects(actor);
   const rows = preview.repairs
@@ -2449,7 +2480,7 @@ async function abilityRepair(actor, targetModule, hpToAdd) {
     if (!item) return { added: 0, details: [] };
     const add = Math.min(remaining, Math.max(0, itemMaxHp(item) - itemHp(item)));
     if (add > 0) {
-      await updateModuleHp(item, itemHp(item) + add);
+      await restoreModuleHp(item, itemHp(item) + add);
       addRepairDetail(item, add);
       added += add;
     }
@@ -2461,7 +2492,7 @@ async function abilityRepair(actor, targetModule, hpToAdd) {
       if (remaining <= 0) break;
       const add = Math.min(1, itemMaxHp(item) - itemHp(item));
       if (add > 0) {
-        await updateModuleHp(item, itemHp(item) + add);
+        await restoreModuleHp(item, itemHp(item) + add);
         addRepairDetail(item, add);
         remaining -= add;
         added += add;
@@ -3343,7 +3374,7 @@ class Transactions {
     const total = repairs.reduce((sum, entry) => sum + entry.cost, 0);
     if (bankBalance() < total) throw new Error("Not enough capital for those repairs.");
     await updateBank(bankBalance() - total);
-    for (const entry of repairs) await entry.item.update({ "system.hp.value": Number(entry.hp.max || entry.hp.value || 0) });
+    for (const entry of repairs) await restoreModuleHp(entry.item, Number(entry.hp.max || entry.hp.value || 0));
     const actorHp = await syncVehicleHpFromModules(ship);
     await refreshShipTokenEffects(ship);
 	    const rows = repairs.map(entry => `${entry.item.name}: ${entry.missing} HP restored (${formatGp(entry.cost)}${isGlaxonInsured(ship) ? `, Glaxon value ${formatGp(entry.rawCost)}` : ""})`).join("<br>");
@@ -3706,7 +3737,7 @@ class Transactions {
       const uses = item.system?.uses;
       if (uses?.max) await item.update({ "system.uses.value": uses.max });
       if (isEquippedShipModule(item) && /shield generator/i.test(item.name)) {
-        await item.update({ "system.hp.value": Number(item.system?.hp?.max || item.system?.hp?.value || 0) });
+        await restoreModuleHp(item, Number(item.system?.hp?.max || item.system?.hp?.value || 0));
       }
     }
     const modules = damageableModules(ship).filter(item => !/shield generator/i.test(item.name));
