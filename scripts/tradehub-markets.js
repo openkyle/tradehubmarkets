@@ -15,6 +15,29 @@ const DEFAULT_DATA = {
   tickerSelections: {}
 };
 
+const REST_CONSUMABLE_MESSAGES = [
+  "{actor} consumes {item} during a {restType}. The snack economy survives another day.",
+  "{actor} enjoys {item} and enters a {restType}. Science says this helps. Probably.",
+  "{actor} takes a {restType}, deploys {item}, and achieves peak tiny comfort.",
+  "{actor} eats {item}. The {restType} immediately becomes 37% more legitimate.",
+  "{actor} savors {item} during the {restType}. Somewhere, a nutritionist gives up.",
+  "{actor} consumes {item}, rests, and briefly stops being a liability.",
+  "{actor} takes a {restType} with {item}. This is either medicine or dessert. Hard to tell.",
+  "{actor} enjoys {item}. The {restType} gains emotional structural integrity.",
+  "{actor} eats {item} with grim heroic focus during the {restType}.",
+  "{actor} cracks into {item} and lets the {restType} hit like a warm blanket.",
+  "{actor} consumes {item}. Morale restored. Dignity pending.",
+  "{actor} spends the {restType} enjoying {item}. No one asks what it is made of.",
+  "{actor} eats {item} and begins the {restType}. The vibes stabilize.",
+  "{actor} enjoys {item} so intensely the {restType} files a report.",
+  "{actor} consumes {item}. The body recovers. The soul negotiates.",
+  "{actor} rests with {item}. It is not elegant, but it works.",
+  "{actor} devours {item} during the {restType}. The silence afterward is respectful.",
+  "{actor} enjoys {item}. For a moment, even the ship sounds less cursed.",
+  "{actor} takes a {restType}, eats {item}, and becomes marginally less doomed.",
+  "{actor} consumes {item}. The {restType} is now officially underway."
+];
+
 let selectedShipId = null;
 let selectedShipName = "";
 const openWindows = new Set();
@@ -70,6 +93,7 @@ Hooks.once("ready", async () => {
   }
   if (game.user.isGM && setting("showGmBar")) GmBar.render();
   installForienShowSoundHook();
+  installRestConsumableHook();
 });
 
 function installForienShowSoundHook() {
@@ -93,6 +117,98 @@ function installForienShowSoundHook() {
     const volume = Math.max(0, Math.min(1, Number(setting("forienShowSoundVolume") ?? 0.8)));
     AudioHelper.play({ src: path, volume, autoplay: true, loop: false }, true);
   }, true);
+}
+
+function installRestConsumableHook() {
+  if (window.__tradeHubRestConsumableHook) return;
+  const proto = CONFIG.Actor?.documentClass?.prototype || Actor.prototype;
+  if (!proto) return;
+  window.__tradeHubRestConsumableHook = true;
+  for (const method of ["shortRest", "longRest"]) {
+    if (typeof proto[method] !== "function") continue;
+    const original = proto[method];
+    proto[method] = async function tradeHubRestConsumableWrapper(...args) {
+      const actor = this;
+      if (await requiresRestConsumable(actor)) {
+        const consumed = await promptRestConsumable(actor, method === "longRest" ? "Long Rest" : "Short Rest");
+        if (!consumed) return false;
+      }
+      return original.apply(this, args);
+    };
+  }
+}
+
+async function requiresRestConsumable(actor) {
+  if (!setting("requireConsumableForPlayerRest")) return false;
+  if (game.user.isGM) return false;
+  if (!actor || actor.type !== "character") return false;
+  if (!actor.isOwner) return false;
+  return true;
+}
+
+function restConsumables(actor) {
+  return actor.items
+    .filter(item => item.type === "consumable" && Number(item.system?.quantity ?? 0) > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function promptRestConsumable(actor, restLabel) {
+  const consumables = restConsumables(actor);
+  if (!consumables.length) {
+    ui.notifications.warn(`${actor.name} needs a consumable before taking a ${restLabel}.`);
+    return false;
+  }
+  const options = consumables
+    .map(item => `<option value="${item.id}">${escapeHtml(item.name)} (${Number(item.system?.quantity ?? 0)})</option>`)
+    .join("");
+  const content = `<div class="thm-root thm-compact">
+    <p><strong>${escapeHtml(actor.name)}</strong> must consume something before taking a ${escapeHtml(restLabel)}.</p>
+    <label for="thm-rest-consumable">Which consumable are you going to eat?</label>
+    <select id="thm-rest-consumable" style="width:100%; margin-top: 6px;">${options}</select>
+  </div>`;
+  const itemId = await new Promise(resolve => {
+    new Dialog({
+      title: `TradeHub ${restLabel} Supplies`,
+      content,
+      buttons: {
+        consume: {
+          icon: "<i class='fas fa-utensils'></i>",
+          label: "Consume and Rest",
+          callback: html => resolve(html.find("#thm-rest-consumable").val())
+        },
+        cancel: {
+          icon: "<i class='fas fa-times'></i>",
+          label: "Cancel",
+          callback: () => resolve(null)
+        }
+      },
+      default: "consume",
+      close: () => resolve(null)
+    }).render(true);
+  });
+  if (!itemId) return false;
+  const item = actor.items.get(itemId);
+  const quantity = Number(item?.system?.quantity ?? 0);
+  if (!item || quantity <= 0) {
+    ui.notifications.warn("That consumable is no longer available.");
+    return false;
+  }
+  await item.update({ "system.quantity": Math.max(0, quantity - 1) });
+  await createRestConsumableMessage(actor, item, restLabel.toLowerCase());
+  ui.notifications.info(`${actor.name} consumed ${item.name} for a ${restLabel}.`);
+  return true;
+}
+
+async function createRestConsumableMessage(actor, item, restType) {
+  const template = REST_CONSUMABLE_MESSAGES[Math.floor(Math.random() * REST_CONSUMABLE_MESSAGES.length)];
+  const text = template
+    .replaceAll("{actor}", escapeHtml(actor.name))
+    .replaceAll("{item}", escapeHtml(item.name))
+    .replaceAll("{restType}", escapeHtml(restType));
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong>TradeHub Rest Supplies</strong><br>${text}</div>`
+  });
 }
 
 Hooks.on("renderChatMessage", (message, html) => {
@@ -314,6 +430,14 @@ function registerSettings() {
   register("launchOnDock", {
     name: "Launch Marketplace on Dock",
     hint: "Automatically opens Starport Services for all logged-in users when the GM docks the party.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  register("requireConsumableForPlayerRest", {
+    name: "Players Must Consume a Consumable to Rest",
+    hint: "When enabled, player-owned character actors must consume one inventory consumable before taking a short or long rest. Vehicles are ignored.",
     scope: "world",
     config: false,
     type: Boolean,
@@ -2545,6 +2669,7 @@ class TradeHubSettingsForm extends FormApplication {
         maxShortagePriceIncreasePercent: Number(setting("maxShortagePriceIncreasePercent") || 57),
         enableTradeRumours: !!setting("enableTradeRumours"),
         launchOnDock: !!setting("launchOnDock"),
+        requireConsumableForPlayerRest: !!setting("requireConsumableForPlayerRest"),
         showGmBar: !!setting("showGmBar"),
         capital: Number(data.capital || 0),
         newsJournalUuid: tradeHubNewsJournal()?.uuid || ""
@@ -2629,6 +2754,7 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("maxShortagePriceIncreasePercent", Math.max(0, Number(formData.maxShortagePriceIncreasePercent || 0)));
     await setSetting("enableTradeRumours", !!formData.enableTradeRumours);
     await setSetting("launchOnDock", !!formData.launchOnDock);
+    await setSetting("requireConsumableForPlayerRest", !!formData.requireConsumableForPlayerRest);
     await setSetting("showGmBar", !!formData.showGmBar);
     data.capital = Number(formData.capital || 0);
     syncShipDirectory(data);

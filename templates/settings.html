@@ -131,6 +131,13 @@
     </div>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
+        <span>Players Must Consume a Consumable to Rest</span>
+        <small>Player-owned characters must pick and consume one inventory consumable before short or long rests. Vehicles are ignored.</small>
+      </label>
+      <input type="checkbox" name="requireConsumableForPlayerRest" {{#if settings.requireConsumableForPlayerRest}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
         <span>Show Floating GM Controls</span>
         <small>Display the draggable TradeHub GM bar.</small>
       </label>
