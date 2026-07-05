@@ -399,6 +399,54 @@
   overflow: auto;
 }
 
+.thm-warez-glitch {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  animation: thm-warez-glitch-fade 0.9s ease-out forwards;
+}
+
+.thm-warez-glitch::before,
+.thm-warez-glitch::after,
+.thm-warez-glitch div {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.12) 0 2px, transparent 2px 7px),
+    linear-gradient(90deg, rgba(0,255,150,0.22), rgba(255,0,180,0.18), rgba(0,160,255,0.18));
+}
+
+.thm-warez-glitch::before {
+  transform: translateX(-8px);
+  clip-path: inset(12% 0 62% 0);
+  animation: thm-warez-glitch-slice 0.18s steps(2, end) infinite;
+}
+
+.thm-warez-glitch::after {
+  transform: translateX(10px);
+  clip-path: inset(48% 0 18% 0);
+  animation: thm-warez-glitch-slice 0.14s steps(2, end) infinite reverse;
+}
+
+.thm-warez-glitch div {
+  opacity: 0.4;
+  filter: contrast(2) saturate(1.8);
+}
+
+@keyframes thm-warez-glitch-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes thm-warez-glitch-slice {
+  0% { clip-path: inset(10% 0 70% 0); }
+  50% { clip-path: inset(62% 0 12% 0); }
+  100% { clip-path: inset(34% 0 40% 0); }
+}
+
 .thm-settings-tabs {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
@@ -897,6 +945,21 @@
 .thm-h4h-actions button {
   min-height: 42px;
   font-weight: 900;
+}
+
+.thm-user-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  margin: 0 0 4px;
+  border: 1px solid rgba(30, 30, 26, 0.18);
+  background: rgba(255, 255, 245, 0.2);
+}
+
+.thm-user-checkbox input {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 680px) {

@@ -129,6 +129,41 @@
         <output id="poisonMovementSoundVolumeValue">{{settings.poisonMovementSoundVolume}}</output>
       </div>
     </div>
+    <h3>Market Crime</h3>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Warez Hacking Markets Active?</span>
+        <small>Selling Warez [Illegal] asks for a DC 16 TEC check. A 16, 17, 18, or 19+ grants 25%, 50%, 75%, or 100% off buy prices at that market for 10 real minutes.</small>
+      </label>
+      <input type="checkbox" name="warezMarketHackEnabled" {{#if settings.warezMarketHackEnabled}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
+        <span>Require Stealth Checks to Sell Illegal Cargo at Markets</span>
+        <small>Non-Warez [Illegal] cargo asks for a Stealth check. Failure still sells the goods, but withholds illegal profit and opens a Smuggling fine for the GM.</small>
+      </label>
+      <input type="checkbox" name="illegalCargoStealthChecksEnabled" {{#if settings.illegalCargoStealthChecksEnabled}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Warez Hack Sound</span>
+        <small>Audio file or URL played locally for the player when the Warez glitch effect triggers.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="warezHackSoundPath" value="{{settings.warezHackSoundPath}}">
+        <button type="button" data-file-picker data-target="warezHackSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Warez Hack Volume</span>
+        <small>Volume for the Warez market hack sound.</small>
+      </label>
+      <div class="thm-slider-control">
+        <input type="range" name="warezHackSoundVolume" value="{{settings.warezHackSoundVolume}}" min="0" max="1" step="0.05" data-volume-output="warezHackSoundVolumeValue">
+        <output id="warezHackSoundVolumeValue">{{settings.warezHackSoundVolume}}</output>
+      </div>
+    </div>
     <h3>Rest Supplies</h3>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
@@ -136,6 +171,24 @@
         <small>Player-owned characters must pick and consume one food, potion, or poison before short or long rests. Vehicles are ignored.</small>
       </label>
       <input type="checkbox" name="requireConsumableForPlayerRest" {{#if settings.requireConsumableForPlayerRest}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Exclude Players From Rest Supplies</span>
+        <small>Checked players will not see the consumable prompt on short or long rests.</small>
+      </label>
+      <div class="thm-settings-control">
+        {{#if restSupplyUsers.length}}
+          {{#each restSupplyUsers}}
+            <label class="thm-checkbox-row thm-user-checkbox">
+              <span>{{name}}</span>
+              <input type="checkbox" name="restConsumableExcludedUsers" value="{{id}}" {{#if excluded}}checked{{/if}}>
+            </label>
+          {{/each}}
+        {{else}}
+          <p class="notes">No non-GM users found.</p>
+        {{/if}}
+      </div>
     </div>
     <h3>Forien Quest Log</h3>
     <div class="thm-settings-row thm-checkbox-row">

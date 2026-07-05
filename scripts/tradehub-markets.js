@@ -12,7 +12,8 @@ const DEFAULT_DATA = {
   markets: {},
   shipDirectory: [],
   activeRumours: [],
-  tickerSelections: {}
+  tickerSelections: {},
+  marketDiscounts: {}
 };
 
 const REST_CONSUMABLE_MESSAGES = [
@@ -124,13 +125,20 @@ function installRestConsumableHook() {
   const proto = CONFIG.Actor?.documentClass?.prototype || Actor.prototype;
   if (!proto) return;
   window.__tradeHubRestConsumableHook = true;
-  for (const method of ["shortRest", "longRest"]) {
+  for (const method of ["shortRest", "longRest", "rest"]) {
     if (typeof proto[method] !== "function") continue;
     const original = proto[method];
     proto[method] = async function tradeHubRestConsumableWrapper(...args) {
       const actor = this;
-      if (await requiresRestConsumable(actor)) {
-        const consumed = await promptRestConsumable(actor, method === "longRest" ? "Long Rest" : "Short Rest");
+      const restLabel = restLabelForMethod(method, args);
+      if (restLabel && !actor.__tradeHubRestConsumablePrompting && await requiresRestConsumable(actor)) {
+        actor.__tradeHubRestConsumablePrompting = true;
+        let consumed = false;
+        try {
+          consumed = await promptRestConsumable(actor, restLabel);
+        } finally {
+          actor.__tradeHubRestConsumablePrompting = false;
+        }
         if (!consumed) return false;
       }
       return original.apply(this, args);
@@ -138,9 +146,25 @@ function installRestConsumableHook() {
   }
 }
 
+function restLabelForMethod(method, args = []) {
+  if (method === "shortRest") return "Short Rest";
+  if (method === "longRest") return "Long Rest";
+  const first = args[0] || {};
+  const type = String(first.type || first.restType || first.rest || "").toLowerCase();
+  if (type.includes("short")) return "Short Rest";
+  if (type.includes("long")) return "Long Rest";
+  if (first.shortRest === true || first.isShortRest === true) return "Short Rest";
+  if (first.longRest === true || first.isLongRest === true) return "Long Rest";
+  const serialized = args.map(arg => typeof arg === "string" ? arg : JSON.stringify(arg || {})).join(" ").toLowerCase();
+  if (serialized.includes("short")) return "Short Rest";
+  if (serialized.includes("long")) return "Long Rest";
+  return null;
+}
+
 async function requiresRestConsumable(actor) {
   if (!setting("requireConsumableForPlayerRest")) return false;
   if (game.user.isGM) return false;
+  if ((setting("restConsumableExcludedUsers") || []).includes(game.user.id)) return false;
   if (!actor || actor.type !== "character") return false;
   if (!actor.isOwner) return false;
   return true;
@@ -430,6 +454,38 @@ function registerSettings() {
     type: Number,
     default: 0.8
   });
+  register("warezMarketHackEnabled", {
+    name: "Warez Hacking Markets Active",
+    hint: "When Warez [Illegal] is sold, TradeHub asks for a TEC check and can temporarily crash buy prices at that market.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  register("illegalCargoStealthChecksEnabled", {
+    name: "Require Stealth Checks to Sell Illegal Cargo",
+    hint: "Non-Warez [Illegal] cargo requires a Stealth check when sold. Failed checks notify the GM and convert the illegal profit into a smuggling fine.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  register("warezHackSoundPath", {
+    name: "Warez Market Hack Sound File",
+    hint: "Audio file or URL played locally when the Warez market hack effect triggers.",
+    scope: "world",
+    config: false,
+    type: String,
+    default: ""
+  });
+  register("warezHackSoundVolume", {
+    name: "Warez Market Hack Sound Volume",
+    hint: "Volume for the Warez market hack sound, from 0 to 1.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 0.8
+  });
   register("bankActorName", { name: "Bank Actor Name", scope: "world", config: false, type: String, default: "Bank of Holding" });
   register("bankFolderName", { name: "Bank Actor Folder", scope: "world", config: false, type: String, default: "Party" });
   register("ammoRestockPack", {
@@ -490,6 +546,14 @@ function registerSettings() {
     type: Boolean,
     default: false
   });
+  register("restConsumableExcludedUsers", {
+    name: "Rest Consumable Excluded Players",
+    hint: "User ids that are exempt from TradeHub rest supply prompts.",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: []
+  });
   register("stockMin", { name: "Market Stock Minimum", scope: "world", config: false, type: Number, default: 200 });
   register("stockMax", { name: "Market Stock Maximum", scope: "world", config: false, type: Number, default: 1300 });
   register("maxPriceChangePercent", { name: "Maximum Price Change Percent", scope: "world", config: false, type: Number, default: 15 });
@@ -531,6 +595,7 @@ function normalizeLocationData(data) {
     loc.mode = "docked";
     loc.useIn = !!loc.useIn;
   }
+  data.marketDiscounts ||= {};
   if (data.currentLocation && !data.locations[data.currentLocation]) data.currentLocation = "";
 }
 
@@ -651,10 +716,11 @@ async function ensureMarket(locationName, options = {}) {
   return data.markets[locationName] || {};
 }
 
-async function marketRows(locationName) {
+async function marketRows(locationName, { buyDiscount = false } = {}) {
   const goods = await getTradeGoods();
   const market = await ensureMarket(locationName);
   const loc = getData().locations[locationName] || {};
+  const discount = buyDiscount ? activeMarketDiscount(locationName) : null;
   return goods
     .filter(good => loc.sellsIllegal || loc.stateOfEmergency || !isIllegalGood(good.name))
     .map(good => {
@@ -662,14 +728,36 @@ async function marketRows(locationName) {
       const pct = Number(state.percent || 0) / 100;
       const priceInc = good.price * (1 + pct);
       const priceDec = good.price * Math.max(0, 1 - pct);
-      const price = state.direction === "Higher" ? priceInc : state.direction === "Lower" ? priceDec : good.price;
-      return { ...good, stock: state.stock || 0, direction: state.direction, percent: state.percent || 0, lastPaid: state.lastPaid || 0, price, priceInc, priceDec, emrg: !!loc.stateOfEmergency && !isIllegalGood(good.name) };
+      const basePrice = state.direction === "Higher" ? priceInc : state.direction === "Lower" ? priceDec : good.price;
+      const price = discount ? Math.max(0, basePrice * (1 - discount.percent / 100)) : basePrice;
+      return { ...good, stock: state.stock || 0, direction: state.direction, percent: state.percent || 0, lastPaid: state.lastPaid || 0, price, priceInc, priceDec, emrg: !!loc.stateOfEmergency && !isIllegalGood(good.name), marketDiscount: discount?.percent || 0 };
     })
     .sort((a, b) => changeSort(a) - changeSort(b) || a.name.localeCompare(b.name));
 }
 
 function isIllegalGood(name) {
   return /\[illegal\]|illegal/i.test(name);
+}
+
+function isWarezGood(name) {
+  return /\bwarez\b/i.test(String(name || ""));
+}
+
+function activeMarketDiscount(locationName) {
+  const data = getData();
+  const discount = data.marketDiscounts?.[locationName];
+  if (!discount) return null;
+  if (Number(discount.expiresAt || 0) <= Date.now()) return null;
+  return { percent: Math.max(0, Math.min(100, Number(discount.percent || 0))), expiresAt: Number(discount.expiresAt || 0), userId: discount.userId || "" };
+}
+
+function warezDiscountForRoll(total) {
+  const roll = Math.min(20, Math.floor(Number(total || 0)));
+  if (roll >= 19) return 100;
+  if (roll >= 18) return 75;
+  if (roll >= 17) return 50;
+  if (roll >= 16) return 25;
+  return 0;
 }
 
 const RUMOUR_TEMPLATES = [
@@ -1178,6 +1266,84 @@ class SplashPage {
   }
 }
 
+function playerSkillActor() {
+  const controlled = canvas.tokens?.controlled?.find(token => token.actor && token.actor.type !== "vehicle")?.actor;
+  return game.user.character || controlled || game.actors.contents.find(actor => actor.type !== "vehicle" && actor.testUserPermission?.(game.user, "OWNER"));
+}
+
+function skillIdForActor(actor, candidates) {
+  const skills = actor?.system?.skills || {};
+  return candidates.find(id => skills[id]) || "";
+}
+
+function extractRollTotal(result) {
+  if (result == null) return null;
+  if (typeof result === "number") return result;
+  if (Array.isArray(result)) return extractRollTotal(result[0]);
+  if (typeof result.total === "number") return result.total;
+  if (typeof result.roll?.total === "number") return result.roll.total;
+  if (Array.isArray(result.rolls)) return extractRollTotal(result.rolls[0]);
+  return null;
+}
+
+async function manualSkillTotal(label, dc) {
+  return new Promise(resolve => {
+    new Dialog({
+      title: `${label} Check`,
+      content: `<div class="thm-root thm-compact">
+        <p>No matching ${label} skill was found. Enter the check total to continue.</p>
+        <label>${label} Total (DC ${dc})<input type="number" id="thm-skill-total" value="0"></label>
+      </div>`,
+      buttons: {
+        ok: { label: "Continue", callback: html => resolve(Number(html.find("#thm-skill-total").val() || 0)) },
+        cancel: { label: "Cancel", callback: () => resolve(null) }
+      },
+      default: "ok",
+      close: () => resolve(null)
+    }, dialogOptions()).render(true);
+  });
+}
+
+async function requestMarketSkillCheck({ label, dc, skillIds }) {
+  const actor = playerSkillActor();
+  const skillId = skillIdForActor(actor, skillIds);
+  if (actor?.rollSkill && skillId) {
+    const result = await actor.rollSkill(skillId, { fastForward: false, chatMessage: true });
+    const total = extractRollTotal(result);
+    if (total != null) return total;
+  }
+  return manualSkillTotal(label, dc);
+}
+
+function playWarezHackEffects() {
+  const path = setting("warezHackSoundPath");
+  if (path) AudioHelper.play({ src: path, volume: Math.max(0, Math.min(1, Number(setting("warezHackSoundVolume") ?? 0.8))), autoplay: true, loop: false }, false);
+  const overlay = document.createElement("div");
+  overlay.className = "thm-warez-glitch";
+  overlay.innerHTML = `<div></div><div></div><div></div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => overlay.remove(), 950);
+}
+
+async function prepareSellChecks(items) {
+  const selected = items.map(item => item.name);
+  const hasWarez = selected.some(isWarezGood);
+  const hasOtherIllegal = selected.some(name => isIllegalGood(name) && !isWarezGood(name));
+  const checks = {};
+  if (hasWarez && setting("warezMarketHackEnabled")) {
+    playWarezHackEffects();
+    const total = await requestMarketSkillCheck({ label: "TEC", dc: 16, skillIds: ["tec", "technology"] });
+    if (total == null) return null;
+    checks.warezTecTotal = total;
+  }
+  if (hasOtherIllegal && setting("illegalCargoStealthChecksEnabled")) {
+    const total = await requestMarketSkillCheck({ label: "Stealth", dc: 14, skillIds: ["ste", "stealth"] });
+    if (total == null) return null;
+    checks.illegalStealthTotal = total;
+  }
+  return checks;
+}
+
 class MarketDialog {
   static rowInputName(row) { return row.name.replace(/[^a-zA-Z0-9-_]/g, ""); }
 
@@ -1187,7 +1353,7 @@ class MarketDialog {
     if (type === "sell" && !state.sell) return ui.notifications.error("Selling cargo is not available at this location.");
     const ship = selectedShip();
     if (!ship) return ui.notifications.error(`No ${setting("vehicleLabel").toLowerCase()} selected.`);
-    const rows = await marketRows(state.loc.name);
+    const rows = await marketRows(state.loc.name, { buyDiscount: type === "buy" });
     const ad = await randomAd();
     const stats = cargoStats(ship);
     const sellMode = type === "sell";
@@ -1244,12 +1410,14 @@ class MarketDialog {
     const sellMode = type === "sell";
     const recalc = () => {
       let total = 0;
+      let anyQty = false;
       let cargo = stats.current;
       html.find("tbody tr[data-key]").each((_i, tr) => {
       const row = $(tr);
         const qty = Math.max(0, Math.min(Number(row.find(".thm-qty").val() || 0), Number(row.data("max"))));
         row.find(".thm-qty").val(qty);
         const active = qty > 0;
+        anyQty ||= active;
         row.find(".thm-check").prop("disabled", !active).prop("checked", active);
         total += qty * Number(row.data("price"));
         cargo += (sellMode ? -1 : 1) * qty * Number(row.data("weight"));
@@ -1258,7 +1426,7 @@ class MarketDialog {
       html.find("#thm-total").text(`${sellMode ? "Cart" : "Purchase"} Total: ${formatGp(total)}`);
       html.find("#thm-bank").text(`Capital: ${formatGp(remainingBank)}`).toggleClass("thm-red", remainingBank < 0);
       html.find("#thm-cargo").html(cargoBar({ ...stats, current: cargo, remaining: stats.max - cargo, pct: stats.max ? Math.min(cargo / stats.max * 100, 100) : 0 }));
-      html.find("#thm-final").prop("disabled", total <= 0 || remainingBank < 0 || (!sellMode && cargo > stats.max));
+      html.find("#thm-final").prop("disabled", !anyQty || remainingBank < 0 || (!sellMode && cargo > stats.max));
     };
     const clampRow = row => {
       row = $(row);
@@ -1297,14 +1465,16 @@ class MarketDialog {
     html.find(".thm-item-cell img, .thm-item-name").on("click", async ev => (await fromUuid(ev.currentTarget.dataset.uuid))?.sheet?.render(true));
     html.find(".thm-open-ship").on("click", () => game.actors.get(ship.id)?.sheet?.render(true));
     html.find("#thm-cancel").on("click", () => html.closest(".app").find(".close").click());
-    html.find("#thm-final").on("click", () => {
+    html.find("#thm-final").on("click", async () => {
       const items = [];
       html.find("tbody tr[data-key]").each((_i, tr) => {
         const row = $(tr);
         const quantity = Number(row.find(".thm-qty").val() || 0);
         if (quantity > 0) items.push({ name: row.data("name"), quantity });
       });
-      requestGm(sellMode ? "sellGoods" : "buyGoods", { shipId: ship.id, location: currentLocation().name, items });
+      const checks = sellMode ? await prepareSellChecks(items) : {};
+      if (checks === null) return;
+      requestGm(sellMode ? "sellGoods" : "buyGoods", { shipId: ship.id, location: currentLocation().name, items, checks });
       html.closest(".app").find(".close").click();
     });
     activateTableSort(html.find(".thm-table"));
@@ -2323,8 +2493,8 @@ async function clearTradeHubPoison(actor) {
 async function applyPoisonMovementDamage(actor, tokenDoc, damage) {
   const hp = actor.system?.attributes?.hp || {};
   const current = Number(hp.value || 0);
-  const next = Math.max(0, current - damage);
-  await actor.update({ "system.attributes.hp.value": next });
+  const next = await applyActorDamage(actor, damage);
+  await showTokenDamageText(tokenDoc, damage);
   await poisonTokenFlash(actor);
   const soundPath = setting("poisonMovementSoundPath");
   if (soundPath) {
@@ -2333,8 +2503,44 @@ async function applyPoisonMovementDamage(actor, tokenDoc, damage) {
   }
   await ChatMessage.create({
     speaker: ChatMessage.getSpeaker({ actor }),
-    content: `<div class="thm-chat-card"><strong style="color:purple;">${escapeHtml(actor.name)} suffers ${damage} poison damage while moving.</strong><br>HP: ${current} → ${next}${tokenDoc ? `<br><span class="thm-muted">Token: ${escapeHtml(tokenDoc.name || actor.name)}</span>` : ""}</div>`
+    content: `<div class="thm-chat-card"><strong style="color:purple;">${escapeHtml(actor.name)} suffers ${damage} poison damage while moving.</strong><br>HP: ${current} → ${next}</div>`
   });
+}
+
+async function applyActorDamage(actor, damage) {
+  const amount = Math.max(0, Number(damage || 0));
+  const before = Number(actor.system?.attributes?.hp?.value || 0);
+  if (typeof actor.applyDamage === "function") {
+    try {
+      await actor.applyDamage(amount);
+      return Number(actor.system?.attributes?.hp?.value ?? Math.max(0, before - amount));
+    } catch (err) {
+      console.warn(`${MODULE_ID} | actor.applyDamage failed; falling back to direct HP update.`, err);
+    }
+  }
+  const next = Math.max(0, before - amount);
+  await actor.update({ "system.attributes.hp.value": next });
+  return next;
+}
+
+async function showTokenDamageText(tokenDoc, damage) {
+  try {
+    const token = tokenDoc?.object || canvas?.tokens?.get(tokenDoc?.id);
+    const center = token?.center || { x: Number(tokenDoc?.x || 0), y: Number(tokenDoc?.y || 0) };
+    if (!canvas?.interface?.createScrollingText) return;
+    await canvas.interface.createScrollingText(center, `-${Math.max(0, Number(damage || 0))}`, {
+      anchor: CONST.TEXT_ANCHOR_POINTS?.CENTER,
+      direction: CONST.TEXT_ANCHOR_POINTS?.TOP,
+      distance: Math.max(40, Number(canvas?.grid?.size || canvas?.scene?.grid?.size || 100) * 0.75),
+      fontSize: 32,
+      fill: "#c05cff",
+      stroke: "#000000",
+      strokeThickness: 4,
+      jitter: 0.25
+    });
+  } catch (err) {
+    console.warn(`${MODULE_ID} | Failed to show poison damage text.`, err);
+  }
 }
 
 function actorMovementSpeed(actor) {
@@ -2386,14 +2592,16 @@ async function poisonTokenFlash(actor) {
     blue: 1,
     alpha: 1
   }];
-  await withActorTokensSelected(actor, async () => {
+  const add = () => withActorTokensSelected(actor, async () => {
     await TokenMagic.addUpdateFiltersOnSelected(params);
   });
-  window.setTimeout(() => {
-    withActorTokensSelected(actor, async () => {
-      await TokenMagic.deleteFiltersOnSelected?.("thmPoisonBlackWhite");
-    });
-  }, 900);
+  const remove = () => withActorTokensSelected(actor, async () => {
+    await TokenMagic.deleteFiltersOnSelected?.("thmPoisonBlackWhite");
+  });
+  await add();
+  window.setTimeout(remove, 220);
+  window.setTimeout(add, 300);
+  window.setTimeout(remove, 520);
 }
 
 function lastAttackAndDamageRolls() {
@@ -2890,6 +3098,7 @@ class TradeHubSettingsForm extends FormApplication {
 
   getData() {
     const data = getData();
+    const excludedRestUsers = new Set(setting("restConsumableExcludedUsers") || []);
     return {
       packFields: [
         this.packFieldData("tradeGoodsPack", "tradeGoodsFolderPath", "Trade Goods", "Items sold through normal markets."),
@@ -2907,6 +3116,10 @@ class TradeHubSettingsForm extends FormApplication {
         forienShowSoundVolume: Number(setting("forienShowSoundVolume") ?? 0.8).toFixed(2),
         poisonMovementSoundPath: setting("poisonMovementSoundPath") || "",
         poisonMovementSoundVolume: Number(setting("poisonMovementSoundVolume") ?? 0.8).toFixed(2),
+        warezMarketHackEnabled: !!setting("warezMarketHackEnabled"),
+        illegalCargoStealthChecksEnabled: !!setting("illegalCargoStealthChecksEnabled"),
+        warezHackSoundPath: setting("warezHackSoundPath") || "",
+        warezHackSoundVolume: Number(setting("warezHackSoundVolume") ?? 0.8).toFixed(2),
         vehicleLabel: setting("vehicleLabel") || "Vessel",
         repairCostPerHp: Number(setting("repairCostPerHp") || 0),
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
@@ -2920,7 +3133,11 @@ class TradeHubSettingsForm extends FormApplication {
         showGmBar: !!setting("showGmBar"),
         capital: Number(data.capital || 0),
         newsJournalUuid: tradeHubNewsJournal()?.uuid || ""
-      }
+      },
+      restSupplyUsers: game.users.contents
+        .filter(user => !user.isGM)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(user => ({ id: user.id, name: user.name, excluded: excludedRestUsers.has(user.id) }))
     };
   }
 
@@ -2983,17 +3200,21 @@ class TradeHubSettingsForm extends FormApplication {
 
   async _updateObject(_event, formData) {
     const data = getData();
+    const rawForm = _event?.target ? new FormData(_event.target) : null;
     const keys = [
       "tradeGoodsPack", "tradeGoodsFolderPath",
       "ammoRestockPack", "ammoRestockFolderPath",
       "vehicleConsumablesPack", "vehicleConsumablesFolderPath",
       "shipyardPack", "shipyardFolderPath",
-      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "forienShowSoundPath", "poisonMovementSoundPath", "vehicleLabel"
+      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "forienShowSoundPath", "poisonMovementSoundPath", "warezHackSoundPath", "vehicleLabel"
     ];
     for (const key of keys) await setSetting(key, formData[key] ?? "");
     await setSetting("forienShowSoundEnabled", !!formData.forienShowSoundEnabled);
     await setSetting("forienShowSoundVolume", Math.max(0, Math.min(1, Number(formData.forienShowSoundVolume ?? 0.8))));
     await setSetting("poisonMovementSoundVolume", Math.max(0, Math.min(1, Number(formData.poisonMovementSoundVolume ?? 0.8))));
+    await setSetting("warezMarketHackEnabled", !!formData.warezMarketHackEnabled);
+    await setSetting("illegalCargoStealthChecksEnabled", !!formData.illegalCargoStealthChecksEnabled);
+    await setSetting("warezHackSoundVolume", Math.max(0, Math.min(1, Number(formData.warezHackSoundVolume ?? 0.8))));
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
     await setSetting("stockMin", Number(formData.stockMin || 0));
@@ -3003,6 +3224,7 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("enableTradeRumours", !!formData.enableTradeRumours);
     await setSetting("launchOnDock", !!formData.launchOnDock);
     await setSetting("requireConsumableForPlayerRest", !!formData.requireConsumableForPlayerRest);
+    await setSetting("restConsumableExcludedUsers", rawForm ? rawForm.getAll("restConsumableExcludedUsers") : []);
     await setSetting("showGmBar", !!formData.showGmBar);
     data.capital = Number(formData.capital || 0);
     syncShipDirectory(data);
@@ -3091,6 +3313,13 @@ class BankingPage {
 
 function partyActors({ includeVehicles = false } = {}) {
   return game.actors.contents.filter(actor => actor && actor.name !== "Bank of Holding" && (includeVehicles || actor.type !== "vehicle"));
+}
+
+function actorForUserId(userId) {
+  const user = game.users.get(userId);
+  if (user?.character) return user.character;
+  const ownerLevel = CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? CONST.DOCUMENT_PERMISSION_LEVELS?.OWNER ?? 3;
+  return game.actors.contents.find(actor => actor.type !== "vehicle" && Number(actor.ownership?.[userId] || 0) >= ownerLevel) || null;
 }
 
 function h4hJournal() {
@@ -3479,7 +3708,7 @@ class HeroesForHirePage {
 }
 
 class FinesPage {
-  static show() {
+  static show(prefill = {}) {
     if (!game.user.isGM) return ui.notifications.error("Only the GM can issue fines.");
     const loc = currentLocation()?.name || "Galactic Law";
     const crimes = [
@@ -3497,7 +3726,7 @@ class FinesPage {
       { crime: "Forgery", section: `Statute 2-8 of ${loc}`, fine: 1200 },
       { crime: "Custom", section: "Custom Entry", fine: 0 }
 	    ];
-	    const selectedActor = canvas.tokens?.controlled?.[0]?.actor;
+	    const selectedActor = game.actors.get(prefill.actorId) || canvas.tokens?.controlled?.[0]?.actor;
 	    const actors = partyActors().sort((a, b) => a.name.localeCompare(b.name));
 	    const ownerLevel = CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? CONST.DOCUMENT_PERMISSION_LEVELS.OWNER;
 	    const playerOwned = actors.filter(actor => game.users.contents.some(user => !user.isGM && Number(actor.ownership?.[user.id] || 0) >= ownerLevel));
@@ -3535,6 +3764,11 @@ class FinesPage {
 	        html.find("#fine-search").on("input", selectMatchingToken);
 	        html.find("#fine-player, #fine-crime").on("change", sync);
 	        sync();
+	        if (prefill.crime) {
+	          html.find("#fine-crime").val(prefill.crime);
+	          html.find("#fine-description").val(prefill.description || prefill.crime);
+	          html.find("#fine-amount").val(Math.max(0, Number(prefill.fineAmount || 0)));
+	        }
 	      }
 	    }, { ...dialogOptions(), width: 560 }).render(true);
   }
@@ -3640,7 +3874,7 @@ class GmBar {
 class Transactions {
   static async buyGoods({ shipId, location, items }, userId) {
     const ship = game.actors.get(shipId);
-    const rows = await marketRows(location);
+    const rows = await marketRows(location, { buyDiscount: true });
     const data = getData();
     let total = 0;
     let addedWeight = 0;
@@ -3678,24 +3912,68 @@ class Transactions {
     SplashPage.refreshSplash();
   }
 
-  static async sellGoods({ shipId, location, items }, userId) {
+  static async sellGoods({ shipId, location, items, checks = {} }, userId) {
     const ship = game.actors.get(shipId);
     const rows = await marketRows(location);
     const data = getData();
     let total = 0;
+    let forfeitedIllegalTotal = 0;
     const receipt = [];
+    const soldLines = [];
+    const soldWarez = [];
+    const soldIllegal = [];
     for (const entry of items) {
       const row = rows.find(r => r.name === entry.name);
       const item = ship.items.getName(entry.name);
       if (!row || !item) continue;
       const qty = Math.min(Number(entry.quantity), Number(item.system.quantity || 0));
-      total += qty * row.price;
-      receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each.`);
+      if (qty <= 0) continue;
+      const lineTotal = qty * row.price;
+      const warez = isWarezGood(row.name);
+      const illegal = isIllegalGood(row.name) && !warez;
+      if (warez) soldWarez.push({ row, qty, lineTotal });
+      if (illegal) soldIllegal.push({ row, qty, lineTotal });
+      soldLines.push({ row, qty, lineTotal, warez, illegal });
       const remaining = Number(item.system.quantity || 0) - qty;
       if (remaining <= 0 && row.name.toLowerCase() !== "hydrogen fuel") await item.delete();
       else await item.update({ "system.quantity": Math.max(0, remaining) });
       data.markets[location][row.name].stock = Number(data.markets[location][row.name].stock || 0) + qty;
       data.markets[location][row.name].lastPaid = row.price;
+    }
+    const stealthFailure = setting("illegalCargoStealthChecksEnabled") && soldIllegal.length && Number(checks.illegalStealthTotal || 0) < 14;
+    for (const { row, qty, lineTotal, illegal } of soldLines) {
+      if (stealthFailure && illegal) {
+        forfeitedIllegalTotal += lineTotal;
+        receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each. <span class="thm-red">Smuggling fine pending; profit withheld.</span>`);
+      } else {
+        total += lineTotal;
+        receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each.`);
+      }
+    }
+    if (setting("warezMarketHackEnabled") && soldWarez.length) {
+      const discount = warezDiscountForRoll(checks.warezTecTotal);
+      const tecTotal = Number(checks.warezTecTotal || 0);
+      if (discount > 0) {
+        data.marketDiscounts ||= {};
+        data.marketDiscounts[location] = { percent: discount, expiresAt: Date.now() + 10 * 60 * 1000, userId };
+        await ChatMessage.create({ content: `<strong>${escapeHtml(game.users.get(userId)?.name || "A player")} has used illegal Warez to favorably crash the market!</strong><br>Prices are <strong>${discount}% off</strong> at ${escapeHtml(location)} for the next 10 minutes.` });
+      } else if (tecTotal < 16) {
+        await ChatMessage.create({
+          whisper: ChatMessage.getWhisperRecipients("GM").map(user => user.id),
+          content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} sold illegal Warez at ${escapeHtml(location)} and failed the TEC check. No market discount was applied.`
+        });
+        const actor = actorForUserId(userId);
+        FinesPage.show({ actorId: actor?.id, crime: "Smuggling", description: "Sold illegal Warez", fineAmount: 0 });
+      }
+    }
+    if (stealthFailure) {
+      const fine = Math.floor(forfeitedIllegalTotal * 0.3);
+      await ChatMessage.create({
+        whisper: ChatMessage.getWhisperRecipients("GM").map(user => user.id),
+        content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} failed a Stealth check selling illegal cargo at ${escapeHtml(location)}.<br>Illegal profit withheld: ${formatGp(forfeitedIllegalTotal)}<br>Suggested smuggling fine: ${formatGp(fine)}`
+      });
+      const actor = actorForUserId(userId);
+      FinesPage.show({ actorId: actor?.id, crime: "Smuggling", description: "Smuggling", fineAmount: fine });
     }
     await updateBank(bankBalance() + total);
     syncShipDirectory(data);
