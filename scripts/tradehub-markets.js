@@ -148,14 +148,19 @@ async function requiresRestConsumable(actor) {
 
 function restConsumables(actor) {
   return actor.items
-    .filter(item => item.type === "consumable" && Number(item.system?.quantity ?? 0) > 0)
+    .filter(item => item.type === "consumable" && isRestConsumableType(item) && Number(item.system?.quantity ?? 0) > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function isRestConsumableType(item) {
+  const type = String(item.system?.type?.value || item.system?.type || item.system?.consumableType || "").toLowerCase();
+  return ["food", "potion", "poison"].includes(type);
 }
 
 async function promptRestConsumable(actor, restLabel) {
   const consumables = restConsumables(actor);
   if (!consumables.length) {
-    ui.notifications.warn(`${actor.name} needs a consumable before taking a ${restLabel}.`);
+    ui.notifications.warn(`${actor.name} needs food, a potion, or a poison before taking a ${restLabel}.`);
     return false;
   }
   const options = consumables
@@ -193,10 +198,27 @@ async function promptRestConsumable(actor, restLabel) {
     ui.notifications.warn("That consumable is no longer available.");
     return false;
   }
-  await item.update({ "system.quantity": Math.max(0, quantity - 1) });
+  await useRestConsumableItem(item, quantity);
   await createRestConsumableMessage(actor, item, restLabel.toLowerCase());
   ui.notifications.info(`${actor.name} consumed ${item.name} for a ${restLabel}.`);
   return true;
+}
+
+async function useRestConsumableItem(item, quantityBefore = Number(item.system?.quantity ?? 0)) {
+  try {
+    if (typeof item.use === "function") {
+      await item.use({ configureDialog: false }, { createMessage: true });
+    } else if (typeof item.roll === "function") {
+      await item.roll();
+    }
+  } catch (err) {
+    console.warn(`${MODULE_ID} | Failed to use rest consumable item card for ${item.name}`, err);
+  }
+  const fresh = item.actor?.items?.get(item.id) || item;
+  const quantityAfterUse = Number(fresh.system?.quantity ?? 0);
+  if (quantityAfterUse >= quantityBefore) {
+    await fresh.update({ "system.quantity": Math.max(0, quantityBefore - 1) });
+  }
 }
 
 async function createRestConsumableMessage(actor, item, restType) {
@@ -437,7 +459,7 @@ function registerSettings() {
   });
   register("requireConsumableForPlayerRest", {
     name: "Players Must Consume a Consumable to Rest",
-    hint: "When enabled, player-owned character actors must consume one inventory consumable before taking a short or long rest. Vehicles are ignored.",
+    hint: "When enabled, player-owned character actors must consume one food, potion, or poison consumable before taking a short or long rest. Vehicles are ignored.",
     scope: "world",
     config: false,
     type: Boolean,
