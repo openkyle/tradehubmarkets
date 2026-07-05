@@ -4,6 +4,7 @@
     <button type="button" data-tab="visuals">Visuals</button>
     <button type="button" data-tab="capital">Capital</button>
     <button type="button" data-tab="market">Market Math</button>
+    <button type="button" data-tab="homebrew">Homebrew</button>
     <button type="button" data-tab="help">Help</button>
   </nav>
 
@@ -63,40 +64,6 @@
         <button type="button" data-file-picker data-target="starportLoadSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
       </div>
     </div>
-    <div class="thm-settings-row thm-checkbox-row">
-      <label>
-        <span>Forien Show to Players Sound</span>
-        <small>Add a sound to Forien's Show to Players popup.</small>
-      </label>
-      <input type="checkbox" name="forienShowSoundEnabled" {{#if settings.forienShowSoundEnabled}}checked{{/if}}>
-    </div>
-    <div class="thm-settings-row">
-      <label>
-        <span>Forien Popup Sound File</span>
-        <small>Audio file or URL played for all players when a quest is shown.</small>
-      </label>
-      <div class="thm-file-control">
-        <input type="text" name="forienShowSoundPath" value="{{settings.forienShowSoundPath}}">
-        <button type="button" data-file-picker data-target="forienShowSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
-      </div>
-    </div>
-    <div class="thm-settings-row">
-      <label>
-        <span>Forien Popup Volume</span>
-        <small>Volume for the Show to Players sound.</small>
-      </label>
-      <div class="thm-slider-control">
-        <input type="range" name="forienShowSoundVolume" value="{{settings.forienShowSoundVolume}}" min="0" max="1" step="0.05" data-volume-output="forienShowSoundVolumeValue">
-        <output id="forienShowSoundVolumeValue">{{settings.forienShowSoundVolume}}</output>
-      </div>
-    </div>
-    <div class="thm-settings-row">
-      <label>
-        <span>Vehicle Label</span>
-        <small>Shown as Vessel, Ship, Vehicle, Carriage, etc.</small>
-      </label>
-      <input type="text" name="vehicleLabel" value="{{settings.vehicleLabel}}">
-    </div>
   </section>
 
   <section class="thm-settings-section" data-tab-panel="capital">
@@ -131,17 +98,80 @@
     </div>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
+        <span>Show Floating GM Controls</span>
+        <small>Display the draggable TradeHub GM bar.</small>
+      </label>
+      <input type="checkbox" name="showGmBar" {{#if settings.showGmBar}}checked{{/if}}>
+    </div>
+  </section>
+
+  <section class="thm-settings-section" data-tab-panel="homebrew">
+    <h2>Homebrew</h2>
+    <p class="notes">Campaign-specific helpers and table rules that extend normal Foundry and dnd5e behavior.</p>
+    <h3>Poison</h3>
+    <div class="thm-settings-row">
+      <label>
+        <span>Poison Movement Sound</span>
+        <small>Audio file or URL played for all players when TradeHub poison movement damage triggers.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="poisonMovementSoundPath" value="{{settings.poisonMovementSoundPath}}">
+        <button type="button" data-file-picker data-target="poisonMovementSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Poison Movement Volume</span>
+        <small>Volume for the poison movement damage sound.</small>
+      </label>
+      <div class="thm-slider-control">
+        <input type="range" name="poisonMovementSoundVolume" value="{{settings.poisonMovementSoundVolume}}" min="0" max="1" step="0.05" data-volume-output="poisonMovementSoundVolumeValue">
+        <output id="poisonMovementSoundVolumeValue">{{settings.poisonMovementSoundVolume}}</output>
+      </div>
+    </div>
+    <h3>Rest Supplies</h3>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
         <span>Players Must Consume a Consumable to Rest</span>
         <small>Player-owned characters must pick and consume one food, potion, or poison before short or long rests. Vehicles are ignored.</small>
       </label>
       <input type="checkbox" name="requireConsumableForPlayerRest" {{#if settings.requireConsumableForPlayerRest}}checked{{/if}}>
     </div>
+    <h3>Forien Quest Log</h3>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
-        <span>Show Floating GM Controls</span>
-        <small>Display the draggable TradeHub GM bar.</small>
+        <span>Forien Show to Players Sound</span>
+        <small>Add a sound to Forien's Show to Players popup.</small>
       </label>
-      <input type="checkbox" name="showGmBar" {{#if settings.showGmBar}}checked{{/if}}>
+      <input type="checkbox" name="forienShowSoundEnabled" {{#if settings.forienShowSoundEnabled}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Forien Popup Sound File</span>
+        <small>Audio file or URL played for all players when a quest is shown.</small>
+      </label>
+      <div class="thm-file-control">
+        <input type="text" name="forienShowSoundPath" value="{{settings.forienShowSoundPath}}">
+        <button type="button" data-file-picker data-target="forienShowSoundPath"><i class="fas fa-file-audio"></i> Browse</button>
+      </div>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Forien Popup Volume</span>
+        <small>Volume for the Show to Players sound.</small>
+      </label>
+      <div class="thm-slider-control">
+        <input type="range" name="forienShowSoundVolume" value="{{settings.forienShowSoundVolume}}" min="0" max="1" step="0.05" data-volume-output="forienShowSoundVolumeValue">
+        <output id="forienShowSoundVolumeValue">{{settings.forienShowSoundVolume}}</output>
+      </div>
+    </div>
+    <h3>Labels</h3>
+    <div class="thm-settings-row">
+      <label>
+        <span>Vehicle Label</span>
+        <small>Shown as Vessel, Ship, Vehicle, Carriage, etc.</small>
+      </label>
+      <input type="text" name="vehicleLabel" value="{{settings.vehicleLabel}}">
     </div>
   </section>
 

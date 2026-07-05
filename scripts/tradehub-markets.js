@@ -283,6 +283,15 @@ Hooks.on("updateItem", (item, changes) => {
   if (relevant) scheduleVehicleStatSync(actor, `${item.name} updated`);
 });
 
+Hooks.on("updateToken", async (tokenDoc, changes) => {
+  if (!game.user.isGM || !foundry.utils.hasProperty(changes, "x") && !foundry.utils.hasProperty(changes, "y")) return;
+  const actor = tokenDoc?.actor;
+  if (!actor || actor.type === "vehicle") return;
+  const poison = actor.getFlag(MODULE_ID, "poisonedMovement");
+  if (!poison?.active || Number(poison.damage || 0) <= 0) return;
+  await applyPoisonMovementDamage(actor, tokenDoc, Number(poison.damage || 0));
+});
+
 function registerSettings() {
   const register = (key, data) => game.settings.register(MODULE_ID, key, data);
   game.settings.registerMenu(MODULE_ID, "settingsMenu", {
@@ -400,6 +409,22 @@ function registerSettings() {
   register("forienShowSoundVolume", {
     name: "Forien Show to Players Sound Volume",
     hint: "Volume for the Forien Show to Players sound, from 0 to 1.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 0.8
+  });
+  register("poisonMovementSoundPath", {
+    name: "Poison Movement Sound File",
+    hint: "Optional audio file or URL played for all players when TradeHub poison movement damage triggers.",
+    scope: "world",
+    config: false,
+    type: String,
+    default: ""
+  });
+  register("poisonMovementSoundVolume", {
+    name: "Poison Movement Sound Volume",
+    hint: "Volume for the TradeHub poison movement damage sound, from 0 to 1.",
     scope: "world",
     config: false,
     type: Number,
@@ -2033,7 +2058,9 @@ class ShipToolsPage {
 
 class CombatDamagePage {
   static show() {
-    const actor = canvas?.tokens?.controlled?.[0]?.actor || game.actors.get(selectedShipId);
+    const selectedToken = canvas?.tokens?.controlled?.[0];
+    if (selectedToken?.actor && selectedToken.actor.type !== "vehicle") return PoisonStatusPage.show(selectedToken.actor, selectedToken);
+    const actor = selectedToken?.actor || game.actors.get(selectedShipId);
     if (!actor || actor.type !== "vehicle") return ui.notifications.error(`Select a ${setting("vehicleLabel").toLowerCase()} token or choose one in TradeHub first.`);
     const rolls = lastAttackAndDamageRolls();
     const shield = findShipModule(actor, /shield generator|shield/i);
@@ -2171,6 +2198,155 @@ class CombatDamagePage {
 	      }
     }, { ...dialogOptions(["combat-damage"]), width: 520 }).render(true);
   }
+}
+
+class PoisonStatusPage {
+  static show(actor, token) {
+    if (!game.user.isGM) return ui.notifications.error("Only the GM can assign TradeHub poison damage.");
+    if (!actor || actor.type === "vehicle") return ui.notifications.error("Select a player or NPC token.");
+    const rolls = lastAttackAndDamageRolls();
+    const poison = actor.getFlag(MODULE_ID, "poisonedMovement") || {};
+    const activeStatuses = activeStatusLabels(actor);
+    const statusOptions = statusEffectOptions("poisoned");
+    const content = `<div class="thm-root thm-compact">
+      <div class="thm-link-title">Status: ${escapeHtml(actor.name)}</div>
+      <p class="notes">TradeHub poison deals damage every time this token completes movement. The damage defaults from the last damage card when found.</p>
+      <p><strong>Active Foundry Statuses:</strong><br>${activeStatuses.length ? activeStatuses.map(escapeHtml).join(", ") : "<span class='thm-muted'>None detected</span>"}</p>
+      <label>Poison Movement Damage:</label>
+      <input type="number" id="thm-poison-damage" min="0" value="${Number(poison.damage ?? rolls.damage ?? 0)}">
+      <div class="thm-actions">
+        <button type="button" id="thm-apply-poison"><i class="fas fa-skull-crossbones"></i> Apply / Update Poison</button>
+        <button type="button" id="thm-clear-poison"><i class="fas fa-times"></i> Clear Poison</button>
+      </div>
+      <hr>
+      <label>Foundry Status:</label>
+      <select id="thm-status-effect">${statusOptions}</select>
+      <div class="thm-actions">
+        <button type="button" id="thm-add-status"><i class="fas fa-plus"></i> Add Status</button>
+        <button type="button" id="thm-remove-status"><i class="fas fa-minus"></i> Remove Status</button>
+      </div>
+    </div>`;
+    new Dialog({
+      title: "TradeHub Status",
+      content,
+      buttons: { close: { label: "Close" } },
+      render: html => {
+        html.find("#thm-apply-poison").on("click", async () => {
+          const damage = Math.max(0, Number(html.find("#thm-poison-damage").val() || 0));
+          if (!damage) return ui.notifications.warn("Enter poison movement damage.");
+          await applyTradeHubPoison(actor, damage);
+          ui.notifications.info(`${actor.name} is poisoned for ${damage} movement damage.`);
+          html.closest(".app").find(".close").click();
+        });
+        html.find("#thm-clear-poison").on("click", async () => {
+          await clearTradeHubPoison(actor);
+          ui.notifications.info(`${actor.name} poison cleared.`);
+          html.closest(".app").find(".close").click();
+        });
+        html.find("#thm-add-status").on("click", async () => {
+          const status = html.find("#thm-status-effect").val();
+          if (status) await setActorStatus(actor, status, true);
+        });
+        html.find("#thm-remove-status").on("click", async () => {
+          const status = html.find("#thm-status-effect").val();
+          if (status) await setActorStatus(actor, status, false);
+        });
+      }
+    }, { ...dialogOptions(["poison-status"]), width: 520 }).render(true);
+  }
+}
+
+function statusEffectsList() {
+  return Array.from(CONFIG.statusEffects || [])
+    .map(effect => ({
+      id: effect.id || effect._id || effect.name,
+      label: game.i18n?.localize?.(effect.label || effect.name || effect.id || "") || effect.name || effect.id || ""
+    }))
+    .filter(effect => effect.id)
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function statusEffectOptions(selected = "") {
+  const effects = statusEffectsList();
+  return effects.map(effect => `<option value="${escapeHtml(effect.id)}" ${effect.id === selected ? "selected" : ""}>${escapeHtml(effect.label)}</option>`).join("");
+}
+
+function activeStatusLabels(actor) {
+  const ids = new Set(Array.from(actor?.statuses || []));
+  const byId = new Map(statusEffectsList().map(effect => [effect.id, effect.label]));
+  return Array.from(ids).map(id => byId.get(id) || id).sort((a, b) => a.localeCompare(b));
+}
+
+async function setActorStatus(actor, statusId, active) {
+  if (!actor || !statusId) return;
+  if (typeof actor.toggleStatusEffect === "function") {
+    await actor.toggleStatusEffect(statusId, { active });
+    return;
+  }
+  const token = actorSceneTokens(actor)[0];
+  if (typeof token?.toggleEffect === "function") {
+    const effect = (CONFIG.statusEffects || []).find(entry => (entry.id || entry._id || entry.name) === statusId);
+    if (effect) await token.toggleEffect(effect, { active });
+  }
+}
+
+async function applyTradeHubPoison(actor, damage) {
+  await actor.setFlag(MODULE_ID, "poisonedMovement", { active: true, damage: Math.max(0, Number(damage || 0)) });
+  await setActorStatus(actor, "poisoned", true);
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(actor.name)} is poisoned.</strong><br>Movement will deal <strong>${Math.max(0, Number(damage || 0))} poison damage</strong> each time movement completes.</div>`
+  });
+}
+
+async function clearTradeHubPoison(actor) {
+  await actor.unsetFlag(MODULE_ID, "poisonedMovement");
+  await setActorStatus(actor, "poisoned", false);
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(actor.name)} is no longer poisoned.</strong></div>`
+  });
+}
+
+async function applyPoisonMovementDamage(actor, tokenDoc, damage) {
+  const hp = actor.system?.attributes?.hp || {};
+  const current = Number(hp.value || 0);
+  const next = Math.max(0, current - damage);
+  await actor.update({ "system.attributes.hp.value": next });
+  await poisonTokenFlash(actor);
+  const soundPath = setting("poisonMovementSoundPath");
+  if (soundPath) {
+    const volume = Math.max(0, Math.min(1, Number(setting("poisonMovementSoundVolume") ?? 0.8)));
+    AudioHelper.play({ src: soundPath, volume, autoplay: true, loop: false }, true);
+  }
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong style="color:purple;">${escapeHtml(actor.name)} suffers ${damage} poison damage while moving.</strong><br>HP: ${current} → ${next}${tokenDoc ? `<br><span class="thm-muted">Token: ${escapeHtml(tokenDoc.name || actor.name)}</span>` : ""}</div>`
+  });
+}
+
+async function poisonTokenFlash(actor) {
+  if (!game.modules?.get("tokenmagic")?.active || !globalThis.TokenMagic) return;
+  const params = [{
+    filterType: "adjustment",
+    filterId: "thmPoisonBlackWhite",
+    saturation: 0,
+    brightness: 0.65,
+    contrast: 1.2,
+    gamma: 1,
+    red: 1,
+    green: 1,
+    blue: 1,
+    alpha: 1
+  }];
+  await withActorTokensSelected(actor, async () => {
+    await TokenMagic.addUpdateFiltersOnSelected(params);
+  });
+  window.setTimeout(() => {
+    withActorTokensSelected(actor, async () => {
+      await TokenMagic.deleteFiltersOnSelected?.("thmPoisonBlackWhite");
+    });
+  }, 900);
 }
 
 function lastAttackAndDamageRolls() {
@@ -2682,6 +2858,8 @@ class TradeHubSettingsForm extends FormApplication {
         forienShowSoundEnabled: !!setting("forienShowSoundEnabled"),
         forienShowSoundPath: setting("forienShowSoundPath") || "",
         forienShowSoundVolume: Number(setting("forienShowSoundVolume") ?? 0.8).toFixed(2),
+        poisonMovementSoundPath: setting("poisonMovementSoundPath") || "",
+        poisonMovementSoundVolume: Number(setting("poisonMovementSoundVolume") ?? 0.8).toFixed(2),
         vehicleLabel: setting("vehicleLabel") || "Vessel",
         repairCostPerHp: Number(setting("repairCostPerHp") || 0),
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
@@ -2763,11 +2941,12 @@ class TradeHubSettingsForm extends FormApplication {
       "ammoRestockPack", "ammoRestockFolderPath",
       "vehicleConsumablesPack", "vehicleConsumablesFolderPath",
       "shipyardPack", "shipyardFolderPath",
-      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "forienShowSoundPath", "vehicleLabel"
+      "marketplaceImage", "adFolder", "dockSoundPath", "starportLoadSoundPath", "forienShowSoundPath", "poisonMovementSoundPath", "vehicleLabel"
     ];
     for (const key of keys) await setSetting(key, formData[key] ?? "");
     await setSetting("forienShowSoundEnabled", !!formData.forienShowSoundEnabled);
     await setSetting("forienShowSoundVolume", Math.max(0, Math.min(1, Number(formData.forienShowSoundVolume ?? 0.8))));
+    await setSetting("poisonMovementSoundVolume", Math.max(0, Math.min(1, Number(formData.poisonMovementSoundVolume ?? 0.8))));
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
     await setSetting("stockMin", Number(formData.stockMin || 0));
