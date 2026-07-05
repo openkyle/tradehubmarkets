@@ -289,7 +289,7 @@ Hooks.on("updateToken", async (tokenDoc, changes) => {
   if (!actor || actor.type === "vehicle") return;
   const poison = actor.getFlag(MODULE_ID, "poisonedMovement");
   if (!poison?.active || Number(poison.damage || 0) <= 0) return;
-  await applyPoisonMovementDamage(actor, tokenDoc, Number(poison.damage || 0));
+  await handlePoisonMovement(actor, tokenDoc, poison);
 });
 
 function registerSettings() {
@@ -2290,12 +2290,24 @@ async function setActorStatus(actor, statusId, active) {
   }
 }
 
+function tokenPositionMap(actor) {
+  const positions = {};
+  for (const token of actorSceneTokens(actor)) {
+    positions[token.document.id] = { x: Number(token.document.x || 0), y: Number(token.document.y || 0), distance: 0 };
+  }
+  return positions;
+}
+
 async function applyTradeHubPoison(actor, damage) {
-  await actor.setFlag(MODULE_ID, "poisonedMovement", { active: true, damage: Math.max(0, Number(damage || 0)) });
+  await actor.setFlag(MODULE_ID, "poisonedMovement", {
+    active: true,
+    damage: Math.max(0, Number(damage || 0)),
+    positions: tokenPositionMap(actor)
+  });
   await setActorStatus(actor, "poisoned", true);
   await ChatMessage.create({
     speaker: ChatMessage.getSpeaker({ actor }),
-    content: `<div class="thm-chat-card"><strong>${escapeHtml(actor.name)} is poisoned.</strong><br>Movement will deal <strong>${Math.max(0, Number(damage || 0))} poison damage</strong> each time movement completes.</div>`
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(actor.name)} is poisoned.</strong><br>Movement will deal <strong>${Math.max(0, Number(damage || 0))} poison damage</strong> each time they move their full speed.</div>`
   });
 }
 
@@ -2323,6 +2335,41 @@ async function applyPoisonMovementDamage(actor, tokenDoc, damage) {
     speaker: ChatMessage.getSpeaker({ actor }),
     content: `<div class="thm-chat-card"><strong style="color:purple;">${escapeHtml(actor.name)} suffers ${damage} poison damage while moving.</strong><br>HP: ${current} → ${next}${tokenDoc ? `<br><span class="thm-muted">Token: ${escapeHtml(tokenDoc.name || actor.name)}</span>` : ""}</div>`
   });
+}
+
+function actorMovementSpeed(actor) {
+  const movement = actor.system?.attributes?.movement || {};
+  const values = Object.entries(movement)
+    .filter(([key]) => !["units", "hover"].includes(key))
+    .map(([_key, value]) => Number(value || 0))
+    .filter(value => value > 0);
+  return values.length ? Math.max(...values) : 30;
+}
+
+function tokenTravelDistance(previous, tokenDoc) {
+  if (!previous) return 0;
+  const dx = Number(tokenDoc.x || 0) - Number(previous.x || 0);
+  const dy = Number(tokenDoc.y || 0) - Number(previous.y || 0);
+  const gridSize = Number(canvas?.scene?.grid?.size || canvas?.grid?.size || 100) || 100;
+  const gridDistance = Number(canvas?.scene?.grid?.distance || 5) || 5;
+  return Math.hypot(dx, dy) / gridSize * gridDistance;
+}
+
+async function handlePoisonMovement(actor, tokenDoc, poison) {
+  const speed = Math.max(1, actorMovementSpeed(actor));
+  const positions = foundry.utils.deepClone(poison.positions || {});
+  const id = tokenDoc.id;
+  const previous = positions[id] || { x: Number(tokenDoc.x || 0), y: Number(tokenDoc.y || 0), distance: 0 };
+  const traveled = tokenTravelDistance(previous, tokenDoc);
+  const accumulated = Math.max(0, Number(previous.distance || 0) + traveled);
+  const triggers = Math.min(5, Math.floor(accumulated / speed));
+  positions[id] = {
+    x: Number(tokenDoc.x || 0),
+    y: Number(tokenDoc.y || 0),
+    distance: triggers ? accumulated - (triggers * speed) : accumulated
+  };
+  await actor.setFlag(MODULE_ID, "poisonedMovement", { ...poison, positions });
+  if (triggers > 0) await applyPoisonMovementDamage(actor, tokenDoc, Number(poison.damage || 0) * triggers);
 }
 
 async function poisonTokenFlash(actor) {
@@ -3553,11 +3600,11 @@ class GmBar {
 	      <button title="Heroes for Hire"><i class="fas fa-users"></i></button>
 	      <button title="Ship Tools"><i class="fas fa-rocket"></i></button>
 	      <button title="Combat Damage"><i class="fas fa-bomb"></i></button>
+	      <button title="Fines"><i class="fas fa-ticket-alt"></i></button>
 	      <button title="Banking"><i class="fas fa-wallet"></i></button>
-	      <button title="Settings"><i class="fas fa-cog"></i></button>
-	      <button title="Fines"><i class="fas fa-ticket-alt"></i></button>`;
+	      <button title="Settings"><i class="fas fa-cog"></i></button>`;
 	    document.body.appendChild(bar);
-	    const [dock, meetNpc, meetSystem, market, heroes, tools, damage, bank, config, fines] = bar.querySelectorAll("button");
+	    const [dock, meetNpc, meetSystem, market, heroes, tools, damage, fines, bank, config] = bar.querySelectorAll("button");
 	    dock.addEventListener("click", () => DockingPage.showDockingPage());
 	    meetNpc.addEventListener("click", () => MeetNpcPage.show());
 	    meetSystem.addEventListener("click", () => MeetSystemPage.show());
@@ -3565,9 +3612,9 @@ class GmBar {
 	    heroes.addEventListener("click", () => HeroesForHirePage.show());
 	    tools.addEventListener("click", () => ShipToolsPage.show());
 	    damage.addEventListener("click", () => CombatDamagePage.show());
+	    fines.addEventListener("click", () => FinesPage.show());
 	    bank.addEventListener("click", () => BankingPage.show());
 	    config.addEventListener("click", () => ConfigPage.show());
-	    fines.addEventListener("click", () => FinesPage.show());
     let dragging = null;
     bar.addEventListener("mousedown", ev => {
       if (ev.target.tagName === "BUTTON") return;
