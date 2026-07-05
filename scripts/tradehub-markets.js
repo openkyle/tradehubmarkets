@@ -753,7 +753,8 @@ function activeMarketDiscount(locationName) {
 
 function warezDiscountForRoll(total) {
   const roll = Math.min(20, Math.floor(Number(total || 0)));
-  if (roll >= 19) return 100;
+  if (roll >= 20) return 100;
+  if (roll >= 19) return 90;
   if (roll >= 18) return 75;
   if (roll >= 17) return 50;
   if (roll >= 16) return 25;
