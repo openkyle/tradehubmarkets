@@ -174,8 +174,8 @@
     </div>
     <div class="thm-settings-row">
       <label>
-        <span>Exclude Players From Rest Supplies</span>
-        <small>Checked players will not see the consumable prompt on short or long rests.</small>
+        <span>Exclude Characters From Rest Supplies</span>
+        <small>Checked player-owned character actors will not see the consumable prompt on short or long rests.</small>
       </label>
       <div class="thm-settings-control">
         {{#if restSupplyUsers.length}}
@@ -186,7 +186,7 @@
             </label>
           {{/each}}
         {{else}}
-          <p class="notes">No non-GM users found.</p>
+          <p class="notes">No player-owned character actors found.</p>
         {{/if}}
       </div>
     </div>

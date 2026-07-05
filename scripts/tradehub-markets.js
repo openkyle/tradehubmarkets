@@ -164,8 +164,8 @@ function restLabelForMethod(method, args = []) {
 async function requiresRestConsumable(actor) {
   if (!setting("requireConsumableForPlayerRest")) return false;
   if (game.user.isGM) return false;
-  if ((setting("restConsumableExcludedUsers") || []).includes(game.user.id)) return false;
   if (!actor || actor.type !== "character") return false;
+  if ((setting("restConsumableExcludedUsers") || []).includes(actor.id)) return false;
   if (!actor.isOwner) return false;
   return true;
 }
@@ -547,8 +547,8 @@ function registerSettings() {
     default: false
   });
   register("restConsumableExcludedUsers", {
-    name: "Rest Consumable Excluded Players",
-    hint: "User ids that are exempt from TradeHub rest supply prompts.",
+    name: "Rest Consumable Excluded Characters",
+    hint: "Character actor ids that are exempt from TradeHub rest supply prompts.",
     scope: "world",
     config: false,
     type: Object,
@@ -3099,7 +3099,13 @@ class TradeHubSettingsForm extends FormApplication {
 
   getData() {
     const data = getData();
-    const excludedRestUsers = new Set(setting("restConsumableExcludedUsers") || []);
+    const excludedRestActors = new Set(setting("restConsumableExcludedUsers") || []);
+    const ownerLevel = CONST.DOCUMENT_OWNERSHIP_LEVELS?.OWNER ?? CONST.DOCUMENT_PERMISSION_LEVELS?.OWNER ?? 3;
+    const restSupplyActors = game.actors.contents
+      .filter(actor => actor.type === "character")
+      .filter(actor => game.users.contents.some(user => !user.isGM && Number(actor.ownership?.[user.id] || 0) >= ownerLevel))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(actor => ({ id: actor.id, name: actor.name, excluded: excludedRestActors.has(actor.id) }));
     return {
       packFields: [
         this.packFieldData("tradeGoodsPack", "tradeGoodsFolderPath", "Trade Goods", "Items sold through normal markets."),
@@ -3135,10 +3141,7 @@ class TradeHubSettingsForm extends FormApplication {
         capital: Number(data.capital || 0),
         newsJournalUuid: tradeHubNewsJournal()?.uuid || ""
       },
-      restSupplyUsers: game.users.contents
-        .filter(user => !user.isGM)
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(user => ({ id: user.id, name: user.name, excluded: excludedRestUsers.has(user.id) }))
+      restSupplyUsers: restSupplyActors
     };
   }
 
