@@ -1269,8 +1269,10 @@ class SplashPage {
 }
 
 function playerSkillActor() {
+  const assigned = game.user.character;
+  if (assigned?.type !== "vehicle") return assigned;
   const controlled = canvas.tokens?.controlled?.find(token => token.actor && token.actor.type !== "vehicle")?.actor;
-  return game.user.character || controlled || game.actors.contents.find(actor => actor.type !== "vehicle" && actor.testUserPermission?.(game.user, "OWNER"));
+  return controlled || game.actors.contents.find(actor => actor.type !== "vehicle" && actor.testUserPermission?.(game.user, "OWNER"));
 }
 
 function skillIdForActor(actor, candidates) {
@@ -1288,14 +1290,25 @@ function extractRollTotal(result) {
   return null;
 }
 
-async function manualSkillTotal(label, dc) {
+function marketSkillPromptHtml({ actor, label, dc, reason, manual = false }) {
+  return `<div class="thm-root thm-compact">
+    <div class="thm-skill-check-actor">
+      ${actor?.img ? `<img src="${actor.img}" alt="">` : ""}
+      <div>
+        <strong>${escapeHtml(actor?.name || game.user.name || "Acting Character")}</strong>
+        <p>${escapeHtml(reason || `${label} check required.`)}</p>
+      </div>
+    </div>
+    ${manual ? `<label>${escapeHtml(label)} Total (DC ${dc})<input type="number" id="thm-skill-total" value="0"></label>` : `<p class="notes">Click Roll to make a DC ${dc} ${escapeHtml(label)} check using this character.</p>`}
+  </div>`;
+}
+
+async function manualSkillTotal({ actor, label, dc, reason }) {
+  const promptReason = reason || `${label} check required.`;
   return new Promise(resolve => {
     new Dialog({
       title: `${label} Check`,
-      content: `<div class="thm-root thm-compact">
-        <p>No matching ${label} skill was found. Enter the check total to continue.</p>
-        <label>${label} Total (DC ${dc})<input type="number" id="thm-skill-total" value="0"></label>
-      </div>`,
+      content: marketSkillPromptHtml({ actor, label, dc, reason: `${promptReason} No matching ${label} skill was found, so enter the check total to continue.`, manual: true }),
       buttons: {
         ok: { label: "Continue", callback: html => resolve(Number(html.find("#thm-skill-total").val() || 0)) },
         cancel: { label: "Cancel", callback: () => resolve(null) }
@@ -1306,15 +1319,28 @@ async function manualSkillTotal(label, dc) {
   });
 }
 
-async function requestMarketSkillCheck({ label, dc, skillIds }) {
+async function requestMarketSkillCheck({ label, dc, skillIds, reason }) {
   const actor = playerSkillActor();
   const skillId = skillIdForActor(actor, skillIds);
   if (actor?.rollSkill && skillId) {
+    const confirmed = await new Promise(resolve => {
+      new Dialog({
+        title: `${label} Check`,
+        content: marketSkillPromptHtml({ actor, label, dc, reason }),
+        buttons: {
+          roll: { label: `Roll ${label}`, callback: () => resolve(true) },
+          cancel: { label: "Cancel", callback: () => resolve(false) }
+        },
+        default: "roll",
+        close: () => resolve(false)
+      }, dialogOptions()).render(true);
+    });
+    if (!confirmed) return null;
     const result = await actor.rollSkill(skillId, { fastForward: false, chatMessage: true });
     const total = extractRollTotal(result);
     if (total != null) return total;
   }
-  return manualSkillTotal(label, dc);
+  return manualSkillTotal({ actor, label, dc, reason });
 }
 
 function playWarezHackEffects() {
@@ -1338,12 +1364,22 @@ async function prepareSellChecks(items) {
   const hasOtherIllegal = selected.some(name => isIllegalGood(name) && !isWarezGood(name));
   const checks = {};
   if (hasWarez && setting("warezMarketHackEnabled")) {
-    const total = await requestMarketSkillCheck({ label: "TEC", dc: 16, skillIds: ["tec", "technology"] });
+    const total = await requestMarketSkillCheck({
+      label: "TEC",
+      dc: 16,
+      skillIds: ["tec", "technology"],
+      reason: "To hack the market with Warez [Illegal], this character must make a TEC check."
+    });
     if (total == null) return null;
     checks.warezTecTotal = total;
   }
   if (hasOtherIllegal && setting("illegalCargoStealthChecksEnabled")) {
-    const total = await requestMarketSkillCheck({ label: "Stealth", dc: 14, skillIds: ["ste", "stealth"] });
+    const total = await requestMarketSkillCheck({
+      label: "Stealth",
+      dc: 14,
+      skillIds: ["ste", "stealth"],
+      reason: "To sell this illegal content, this character must make a Stealth check."
+    });
     if (total == null) return null;
     checks.illegalStealthTotal = total;
   }

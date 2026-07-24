@@ -487,6 +487,27 @@
   min-height: 34px;
 }
 
+.thm-skill-check-actor {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.thm-skill-check-actor img {
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border: 1px solid #111;
+  background: rgba(0,0,0,0.2);
+}
+
+.thm-skill-check-actor p {
+  margin: 4px 0 0;
+  line-height: 1.25;
+}
+
 .thm-settings-section h2 {
   margin: 0 0 6px;
   padding-bottom: 4px;
