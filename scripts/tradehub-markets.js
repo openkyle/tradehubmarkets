@@ -1124,6 +1124,7 @@ async function handleSocket(message) {
     refreshOpenWindows();
     if (message.openSplash) SplashPage.showSplash();
   }
+  if (message.type === "warezGlitch") playWarezHackEffects();
 }
 
 async function processGmRequest(message) {
@@ -1326,13 +1327,17 @@ function playWarezHackEffects() {
   setTimeout(() => overlay.remove(), 950);
 }
 
+function broadcastWarezHackEffects() {
+  playWarezHackEffects();
+  game.socket.emit(SOCKET, { type: "warezGlitch" });
+}
+
 async function prepareSellChecks(items) {
   const selected = items.map(item => item.name);
   const hasWarez = selected.some(isWarezGood);
   const hasOtherIllegal = selected.some(name => isIllegalGood(name) && !isWarezGood(name));
   const checks = {};
   if (hasWarez && setting("warezMarketHackEnabled")) {
-    playWarezHackEffects();
     const total = await requestMarketSkillCheck({ label: "TEC", dc: 16, skillIds: ["tec", "technology"] });
     if (total == null) return null;
     checks.warezTecTotal = total;
@@ -3955,6 +3960,7 @@ class Transactions {
       }
     }
     if (setting("warezMarketHackEnabled") && soldWarez.length) {
+      broadcastWarezHackEffects();
       const discount = warezDiscountForRoll(checks.warezTecTotal);
       const tecTotal = Number(checks.warezTecTotal || 0);
       if (discount > 0) {
