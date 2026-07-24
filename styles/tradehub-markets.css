@@ -384,18 +384,19 @@
 }
 
 .thm-settings-form {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 12px;
-  min-height: 720px;
+  height: 100%;
+  min-height: 0;
 }
 
 .thm-settings-app .window-content {
-  overflow: auto;
+  overflow: hidden;
 }
 
 .thm-settings-app .thm-settings-section.active {
-  max-height: 620px;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -475,6 +476,15 @@
 
 .thm-settings-section.active {
   display: block;
+}
+
+.thm-settings-form .sheet-footer {
+  margin-top: 0;
+}
+
+.thm-settings-form .sheet-footer button {
+  width: 100%;
+  min-height: 34px;
 }
 
 .thm-settings-section h2 {

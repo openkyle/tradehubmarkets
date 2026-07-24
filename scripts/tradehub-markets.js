@@ -3091,12 +3091,16 @@ async function abilityRepair(actor, targetModule, hpToAdd) {
 
 class TradeHubSettingsForm extends FormApplication {
   static get defaultOptions() {
+    const viewportWidth = Number(globalThis.innerWidth || 1280);
+    const viewportHeight = Number(globalThis.innerHeight || 900);
+    const width = Math.round(Math.min(1180, Math.max(760, viewportWidth * 0.74)));
+    const height = Math.round(Math.min(820, Math.max(620, viewportHeight * 0.78)));
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "tradehub-markets-settings",
       title: "TradeHub Markets Settings",
       template: `modules/${MODULE_ID}/templates/settings.html`,
-      width: 1180,
-      height: 820,
+      width,
+      height,
       closeOnSubmit: true,
       classes: ["tradehub-markets", "thm-settings-app"]
     });
