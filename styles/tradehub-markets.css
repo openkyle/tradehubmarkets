@@ -406,7 +406,7 @@
   z-index: 99999;
   pointer-events: none;
   mix-blend-mode: screen;
-  animation: thm-warez-glitch-fade 0.9s ease-out forwards;
+  animation: thm-warez-glitch-fade 1.8s ease-out forwards;
 }
 
 .thm-warez-glitch::before,
@@ -423,13 +423,13 @@
 .thm-warez-glitch::before {
   transform: translateX(-8px);
   clip-path: inset(12% 0 62% 0);
-  animation: thm-warez-glitch-slice 0.18s steps(2, end) infinite;
+  animation: thm-warez-glitch-slice 0.24s steps(2, end) infinite;
 }
 
 .thm-warez-glitch::after {
   transform: translateX(10px);
   clip-path: inset(48% 0 18% 0);
-  animation: thm-warez-glitch-slice 0.14s steps(2, end) infinite reverse;
+  animation: thm-warez-glitch-slice 0.2s steps(2, end) infinite reverse;
 }
 
 .thm-warez-glitch div {

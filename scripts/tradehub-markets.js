@@ -464,7 +464,7 @@ function registerSettings() {
   });
   register("illegalCargoStealthChecksEnabled", {
     name: "Require Stealth Checks to Sell Illegal Cargo",
-    hint: "Non-Warez [Illegal] cargo requires a Stealth check when sold. Failed checks notify the GM and convert the illegal profit into a smuggling fine.",
+    hint: "All [Illegal] cargo, including Warez, requires a Stealth check when sold. Failed checks sell the goods, forfeit illegal proceeds, and take a 35% smuggling fine from TradeHub capital.",
     scope: "world",
     config: false,
     type: Boolean,
@@ -1303,44 +1303,35 @@ function marketSkillPromptHtml({ actor, label, dc, reason, manual = false }) {
   </div>`;
 }
 
-async function manualSkillTotal({ actor, label, dc, reason }) {
-  const promptReason = reason || `${label} check required.`;
-  return new Promise(resolve => {
-    new Dialog({
-      title: `${label} Check`,
-      content: marketSkillPromptHtml({ actor, label, dc, reason: `${promptReason} No matching ${label} skill was found, so enter the check total to continue.`, manual: true }),
-      buttons: {
-        ok: { label: "Continue", callback: html => resolve(Number(html.find("#thm-skill-total").val() || 0)) },
-        cancel: { label: "Cancel", callback: () => resolve(null) }
-      },
-      default: "ok",
-      close: () => resolve(null)
-    }, dialogOptions()).render(true);
-  });
-}
-
 async function requestMarketSkillCheck({ label, dc, skillIds, reason }) {
   const actor = playerSkillActor();
   const skillId = skillIdForActor(actor, skillIds);
-  if (actor?.rollSkill && skillId) {
-    const confirmed = await new Promise(resolve => {
-      new Dialog({
-        title: `${label} Check`,
-        content: marketSkillPromptHtml({ actor, label, dc, reason }),
-        buttons: {
-          roll: { label: `Roll ${label}`, callback: () => resolve(true) },
-          cancel: { label: "Cancel", callback: () => resolve(false) }
-        },
-        default: "roll",
-        close: () => resolve(false)
-      }, dialogOptions()).render(true);
-    });
-    if (!confirmed) return null;
-    const result = await actor.rollSkill(skillId, { fastForward: false, chatMessage: true });
-    const total = extractRollTotal(result);
-    if (total != null) return total;
+  if (!actor) {
+    ui.notifications.error(`No assigned character found for the ${label} check.`);
+    return null;
   }
-  return manualSkillTotal({ actor, label, dc, reason });
+  if (!actor.rollSkill || !skillId) {
+    ui.notifications.error(`${actor.name} does not have a ${label} skill available for TradeHub to roll.`);
+    return null;
+  }
+  const confirmed = await new Promise(resolve => {
+    new Dialog({
+      title: `${label} Check`,
+      content: marketSkillPromptHtml({ actor, label, dc, reason }),
+      buttons: {
+        roll: { label: `Roll ${label}`, callback: () => resolve(true) },
+        cancel: { label: "Cancel", callback: () => resolve(false) }
+      },
+      default: "roll",
+      close: () => resolve(false)
+    }, dialogOptions()).render(true);
+  });
+  if (!confirmed) return null;
+  const result = await actor.rollSkill(skillId, { fastForward: false, chatMessage: true });
+  const total = extractRollTotal(result);
+  if (total != null) return total;
+  ui.notifications.error(`TradeHub could not read the ${label} roll total.`);
+  return null;
 }
 
 function playWarezHackEffects() {
@@ -1350,7 +1341,7 @@ function playWarezHackEffects() {
   overlay.className = "thm-warez-glitch";
   overlay.innerHTML = `<div></div><div></div><div></div>`;
   document.body.appendChild(overlay);
-  setTimeout(() => overlay.remove(), 950);
+  setTimeout(() => overlay.remove(), 1900);
 }
 
 function broadcastWarezHackEffects() {
@@ -1361,8 +1352,18 @@ function broadcastWarezHackEffects() {
 async function prepareSellChecks(items) {
   const selected = items.map(item => item.name);
   const hasWarez = selected.some(isWarezGood);
-  const hasOtherIllegal = selected.some(name => isIllegalGood(name) && !isWarezGood(name));
+  const hasIllegal = selected.some(isIllegalGood);
   const checks = {};
+  if (hasIllegal && setting("illegalCargoStealthChecksEnabled")) {
+    const total = await requestMarketSkillCheck({
+      label: "Stealth",
+      dc: 14,
+      skillIds: ["ste", "stealth"],
+      reason: "To sell this illegal content, this character must make a Stealth check."
+    });
+    if (total == null) return null;
+    checks.illegalStealthTotal = total;
+  }
   if (hasWarez && setting("warezMarketHackEnabled")) {
     const total = await requestMarketSkillCheck({
       label: "TEC",
@@ -1372,16 +1373,6 @@ async function prepareSellChecks(items) {
     });
     if (total == null) return null;
     checks.warezTecTotal = total;
-  }
-  if (hasOtherIllegal && setting("illegalCargoStealthChecksEnabled")) {
-    const total = await requestMarketSkillCheck({
-      label: "Stealth",
-      dc: 14,
-      skillIds: ["ste", "stealth"],
-      reason: "To sell this illegal content, this character must make a Stealth check."
-    });
-    if (total == null) return null;
-    checks.illegalStealthTotal = total;
   }
   return checks;
 }
@@ -3967,6 +3958,7 @@ class Transactions {
     const data = getData();
     let total = 0;
     let forfeitedIllegalTotal = 0;
+    let illegalFine = 0;
     const receipt = [];
     const soldLines = [];
     const soldWarez = [];
@@ -3979,7 +3971,7 @@ class Transactions {
       if (qty <= 0) continue;
       const lineTotal = qty * row.price;
       const warez = isWarezGood(row.name);
-      const illegal = isIllegalGood(row.name) && !warez;
+      const illegal = isIllegalGood(row.name);
       if (warez) soldWarez.push({ row, qty, lineTotal });
       if (illegal) soldIllegal.push({ row, qty, lineTotal });
       soldLines.push({ row, qty, lineTotal, warez, illegal });
@@ -3993,7 +3985,7 @@ class Transactions {
     for (const { row, qty, lineTotal, illegal } of soldLines) {
       if (stealthFailure && illegal) {
         forfeitedIllegalTotal += lineTotal;
-        receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each. <span class="thm-red">Smuggling fine pending; profit withheld.</span>`);
+        receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each. <span class="thm-red">Illegal sale detected; proceeds forfeited.</span>`);
       } else {
         total += lineTotal;
         receipt.push(`${row.name} x ${qty} @ ${row.price.toFixed(2)} GP each.`);
@@ -4012,22 +4004,20 @@ class Transactions {
           whisper: ChatMessage.getWhisperRecipients("GM").map(user => user.id),
           content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} sold illegal Warez at ${escapeHtml(location)} and failed the TEC check. No market discount was applied.`
         });
-        const actor = actorForUserId(userId);
-        FinesPage.show({ actorId: actor?.id, crime: "Smuggling", description: "Sold illegal Warez", fineAmount: 0 });
       }
     }
     if (stealthFailure) {
-      const fine = Math.floor(forfeitedIllegalTotal * 0.3);
-      await ChatMessage.create({
-        whisper: ChatMessage.getWhisperRecipients("GM").map(user => user.id),
-        content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} failed a Stealth check selling illegal cargo at ${escapeHtml(location)}.<br>Illegal profit withheld: ${formatGp(forfeitedIllegalTotal)}<br>Suggested smuggling fine: ${formatGp(fine)}`
-      });
-      const actor = actorForUserId(userId);
-      FinesPage.show({ actorId: actor?.id, crime: "Smuggling", description: "Smuggling", fineAmount: fine });
+      illegalFine = Math.floor(forfeitedIllegalTotal * 0.35);
+      receipt.push(`<span class="thm-red">Smuggling fine assessed: ${formatGp(illegalFine)}</span>`);
     }
-    await updateBank(bankBalance() + total);
+    await updateBank(bankBalance() + total - illegalFine);
     syncShipDirectory(data);
     await setSetting("data", data);
+    if (stealthFailure) {
+      await ChatMessage.create({
+        content: `<strong>TradeHub Illegal Cargo Sale</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} failed a Stealth check while selling illegal cargo at ${escapeHtml(location)}.<br>Illegal sale completed, but ${formatGp(forfeitedIllegalTotal)} was forfeited and a ${formatGp(illegalFine)} fine was taken from TradeHub capital.<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
+      });
+    }
     await chatReceipt("Cargo Sold by", userId, receipt, `Total Gain of Goods: ${formatGp(total)}`, `TradeHub Capital: ${formatGp(bankBalance())}`, "Funds added to TradeHub capital, thank you for trading with TradeHub(TM)");
     broadcastRefresh();
   }
