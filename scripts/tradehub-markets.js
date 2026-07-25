@@ -1411,7 +1411,7 @@ async function requestMarketSkillCheck({ label, dc, skillIds, abilityIds = [], r
       },
       default: "roll",
       close: () => resolve(false)
-    }, dialogOptions()).render(true);
+    }, { ...dialogOptions(["market-skill-check"]), width: 460 }).render(true);
   });
   if (!confirmed) return null;
   const chatRoll = waitForActorRollTotal(actor);
