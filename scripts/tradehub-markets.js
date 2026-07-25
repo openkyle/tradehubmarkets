@@ -1277,9 +1277,63 @@ function playerSkillActor() {
   return controlled || game.actors.contents.find(actor => actor.type !== "vehicle" && actor.testUserPermission?.(game.user, "OWNER"));
 }
 
-function skillIdForActor(actor, candidates) {
-  const skills = actor?.system?.skills || {};
-  return candidates.find(id => skills[id]) || "";
+function normalizeMarketRollLabel(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function dnd5eConfigLabels(kind) {
+  const labels = game.dnd5e?.config?.[kind] || globalThis.CONFIG?.DND5E?.[kind] || {};
+  return Object.fromEntries(Object.entries(labels).map(([key, value]) => [
+    key,
+    game.i18n?.localize?.(typeof value === "string" ? value : value?.label || value?.name || key) || key
+  ]));
+}
+
+function customAbilitiesSkillsSettings() {
+  try {
+    return game.settings.get("dnd5e-custom-skills", "settings") || {};
+  } catch {
+    return {};
+  }
+}
+
+function customListLabels(list = {}) {
+  return Object.fromEntries(
+    Object.entries(list)
+      .filter(([, value]) => value?.applied !== false)
+      .map(([key, value]) => [key, value?.label])
+      .filter(([, value]) => value)
+  );
+}
+
+function customRollLabels(kind) {
+  const settings = customAbilitiesSkillsSettings();
+  const custom = kind === "abilities" ? settings.customAbilitiesList : settings.customSkillList;
+  return {
+    ...dnd5eConfigLabels(kind),
+    ...customListLabels(custom)
+  };
+}
+
+function actorRollEntries(actor, kind) {
+  const collection = kind === "abilities" ? actor?.system?.abilities : actor?.system?.skills;
+  if (!collection || typeof collection !== "object") return [];
+  const labels = customRollLabels(kind);
+  return Object.entries(collection).map(([key, value]) => ({
+    kind,
+    key,
+    value,
+    label: String(value?.label || labels[key] || key)
+  }));
+}
+
+function resolveMarketRollTarget(actor, candidates = [], kinds = ["skill"]) {
+  if (!actor) return null;
+  const wanted = new Set(candidates.map(normalizeMarketRollLabel).filter(Boolean));
+  const entries = [];
+  if (kinds.includes("skill")) entries.push(...actorRollEntries(actor, "skills"));
+  if (kinds.includes("ability")) entries.push(...actorRollEntries(actor, "abilities"));
+  return entries.find(entry => wanted.has(normalizeMarketRollLabel(entry.key)) || wanted.has(normalizeMarketRollLabel(entry.label))) || null;
 }
 
 function extractRollTotal(result) {
@@ -1292,7 +1346,8 @@ function extractRollTotal(result) {
   return null;
 }
 
-function marketSkillPromptHtml({ actor, label, dc, reason, manual = false }) {
+function marketSkillPromptHtml({ actor, label, dc, reason, manual = false, target = null }) {
+  const rollLabel = target?.label ? `${target.label} ${target.kind === "ability" ? "ability" : "skill"}` : label;
   return `<div class="thm-root thm-compact">
     <div class="thm-skill-check-actor">
       ${actor?.img ? `<img src="${actor.img}" alt="">` : ""}
@@ -1301,25 +1356,25 @@ function marketSkillPromptHtml({ actor, label, dc, reason, manual = false }) {
         <p>${escapeHtml(reason || `${label} check required.`)}</p>
       </div>
     </div>
-    ${manual ? `<label>${escapeHtml(label)} Total (DC ${dc})<input type="number" id="thm-skill-total" value="0"></label>` : `<p class="notes">Click Roll to make a DC ${dc} ${escapeHtml(label)} check using this character.</p>`}
+    ${manual ? `<label>${escapeHtml(label)} Total (DC ${dc})<input type="number" id="thm-skill-total" value="0"></label>` : `<p class="notes">Click Roll to make a DC ${dc} ${escapeHtml(rollLabel)} check using this character.</p>`}
   </div>`;
 }
 
-async function requestMarketSkillCheck({ label, dc, skillIds, reason }) {
+async function requestMarketSkillCheck({ label, dc, skillIds, abilityIds = [], reason, kinds = ["skill"] }) {
   const actor = playerSkillActor();
-  const skillId = skillIdForActor(actor, skillIds);
+  const target = resolveMarketRollTarget(actor, [...(skillIds || []), ...(abilityIds || []), label], kinds);
   if (!actor) {
     ui.notifications.error(`No assigned character found for the ${label} check.`);
     return null;
   }
-  if (!actor.rollSkill || !skillId) {
-    ui.notifications.error(`${actor.name} does not have a ${label} skill available for TradeHub to roll.`);
+  if (!target || (target.kind === "skill" && !actor.rollSkill) || (target.kind === "ability" && !actor.rollAbilityTest)) {
+    ui.notifications.error(`${actor.name} does not have a ${label} skill or ability available for TradeHub to roll.`);
     return null;
   }
   const confirmed = await new Promise(resolve => {
     new Dialog({
       title: `${label} Check`,
-      content: marketSkillPromptHtml({ actor, label, dc, reason }),
+      content: marketSkillPromptHtml({ actor, label, dc, reason, target }),
       buttons: {
         roll: { label: `Roll ${label}`, callback: () => resolve(true) },
         cancel: { label: "Cancel", callback: () => resolve(false) }
@@ -1329,7 +1384,9 @@ async function requestMarketSkillCheck({ label, dc, skillIds, reason }) {
     }, dialogOptions()).render(true);
   });
   if (!confirmed) return null;
-  const result = await actor.rollSkill(skillId, { fastForward: false, chatMessage: true });
+  const result = target.kind === "ability"
+    ? await actor.rollAbilityTest(target.key, { fastForward: false, chatMessage: true })
+    : await actor.rollSkill(target.key, { fastForward: false, chatMessage: true });
   const total = extractRollTotal(result);
   if (total != null) return total;
   ui.notifications.error(`TradeHub could not read the ${label} roll total.`);
@@ -1370,7 +1427,9 @@ async function prepareSellChecks(items) {
     const total = await requestMarketSkillCheck({
       label: "TEC",
       dc: 16,
-      skillIds: ["tec", "technology"],
+      skillIds: ["tec", "technology", "tech"],
+      abilityIds: ["tec", "technology", "tech"],
+      kinds: ["skill", "ability"],
       reason: "To hack the market with Warez [Illegal], this character must make a TEC check."
     });
     if (total == null) return null;
