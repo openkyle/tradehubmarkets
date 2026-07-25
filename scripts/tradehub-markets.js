@@ -2409,31 +2409,60 @@ class PoisonStatusPage {
     if (!actor || actor.type === "vehicle") return ui.notifications.error("Select a player or NPC token.");
     const rolls = lastAttackAndDamageRolls();
     const poison = actor.getFlag(MODULE_ID, "poisonedMovement") || {};
+    const necrotic = actor.getFlag(MODULE_ID, "necroticHp") || {};
+    const hp = actor.system?.attributes?.hp || {};
     const activeStatuses = activeStatusLabels(actor);
     const statusOptions = statusEffectOptions("poisoned");
-    const content = `<div class="thm-root thm-compact">
+    const necroticOriginal = Number(necrotic.originalMax ?? hp.max ?? 0);
+    const necroticCurrent = Number(necrotic.currentMax ?? hp.max ?? 0);
+    const content = `<div class="thm-root thm-compact thm-status-tool">
+      <nav class="thm-settings-tabs thm-damage-tabs">
+        <button type="button" class="active" data-tab="poison">Poison</button>
+        <button type="button" data-tab="foundry-status">Foundry Status</button>
+        <button type="button" data-tab="necrotic">Necrotic</button>
+      </nav>
       <div class="thm-link-title">Status: ${escapeHtml(actor.name)}</div>
-      <p class="notes">TradeHub poison deals damage every time this token completes movement. The damage defaults from the last damage card when found.</p>
-      <p><strong>Active Foundry Statuses:</strong><br>${activeStatuses.length ? activeStatuses.map(escapeHtml).join(", ") : "<span class='thm-muted'>None detected</span>"}</p>
-      <label>Poison Movement Damage:</label>
-      <input type="number" id="thm-poison-damage" min="0" value="${Number(poison.damage ?? rolls.damage ?? 0)}">
-      <div class="thm-actions">
-        <button type="button" id="thm-apply-poison"><i class="fas fa-skull-crossbones"></i> Apply / Update Poison</button>
-        <button type="button" id="thm-clear-poison"><i class="fas fa-times"></i> Clear Poison</button>
-      </div>
-      <hr>
-      <label>Foundry Status:</label>
-      <select id="thm-status-effect">${statusOptions}</select>
-      <div class="thm-actions">
-        <button type="button" id="thm-add-status"><i class="fas fa-plus"></i> Add Status</button>
-        <button type="button" id="thm-remove-status"><i class="fas fa-minus"></i> Remove Status</button>
-      </div>
+      <section class="thm-settings-section active" data-tab-panel="poison">
+        <p class="notes">TradeHub poison deals damage when this token completes movement equal to its full speed. The damage defaults from the last damage card when found.</p>
+        <label>Poison Movement Damage:</label>
+        <input type="number" id="thm-poison-damage" min="0" value="${Number(poison.damage ?? rolls.damage ?? 0)}">
+        <div class="thm-actions">
+          <button type="button" id="thm-apply-poison"><i class="fas fa-skull-crossbones"></i> Apply / Update Poison</button>
+          <button type="button" id="thm-clear-poison"><i class="fas fa-times"></i> Clear Poison</button>
+        </div>
+      </section>
+      <section class="thm-settings-section" data-tab-panel="foundry-status">
+        <p><strong>Active Foundry Statuses:</strong><br>${activeStatuses.length ? activeStatuses.map(escapeHtml).join(", ") : "<span class='thm-muted'>None detected</span>"}</p>
+        <label>Foundry Status:</label>
+        <select id="thm-status-effect">${statusOptions}</select>
+        <div class="thm-actions">
+          <button type="button" id="thm-add-status"><i class="fas fa-plus"></i> Add Status</button>
+          <button type="button" id="thm-remove-status"><i class="fas fa-minus"></i> Remove Status</button>
+        </div>
+      </section>
+      <section class="thm-settings-section" data-tab-panel="necrotic">
+        <p class="notes">Necrotic damage reduces max HP. TradeHub stores the original max HP before the first reduction, then restores that stored value when cured.</p>
+        <p><strong>Current HP:</strong> ${Number(hp.value ?? 0)} / ${Number(hp.max ?? 0)}<br><strong>Stored Baseline:</strong> ${necrotic.active ? `${necroticOriginal} HP` : "<span class='thm-muted'>None saved yet</span>"}<br><strong>Necrotic Current Max:</strong> ${necroticCurrent}</p>
+        <label>Necrotic Max HP Reduction:</label>
+        <input type="number" id="thm-necrotic-damage" min="0" value="${Number(rolls.damage ?? 0)}">
+        <div class="thm-actions">
+          <button type="button" id="thm-apply-necrotic"><i class="fas fa-hand-holding-medical"></i> Apply Necrotic</button>
+          <button type="button" id="thm-cure-necrotic"><i class="fas fa-heart"></i> Cure / Restore HP Max</button>
+        </div>
+      </section>
     </div>`;
     new Dialog({
       title: "TradeHub Status",
       content,
       buttons: { close: { label: "Close" } },
       render: html => {
+        html.find(".thm-damage-tabs button").on("click", ev => {
+          const tab = ev.currentTarget.dataset.tab;
+          html.find(".thm-damage-tabs button").removeClass("active");
+          $(ev.currentTarget).addClass("active");
+          html.find(".thm-settings-section").removeClass("active");
+          html.find(`.thm-settings-section[data-tab-panel="${tab}"]`).addClass("active");
+        });
         html.find("#thm-apply-poison").on("click", async () => {
           const damage = Math.max(0, Number(html.find("#thm-poison-damage").val() || 0));
           if (!damage) return ui.notifications.warn("Enter poison movement damage.");
@@ -2454,9 +2483,65 @@ class PoisonStatusPage {
           const status = html.find("#thm-status-effect").val();
           if (status) await setActorStatus(actor, status, false);
         });
+        html.find("#thm-apply-necrotic").on("click", async () => {
+          const damage = Math.max(0, Number(html.find("#thm-necrotic-damage").val() || 0));
+          if (!damage) return ui.notifications.warn("Enter necrotic max HP reduction.");
+          await applyTradeHubNecrotic(actor, damage);
+          ui.notifications.info(`${actor.name}'s max HP was reduced by ${damage}.`);
+          html.closest(".app").find(".close").click();
+        });
+        html.find("#thm-cure-necrotic").on("click", async () => {
+          await cureTradeHubNecrotic(actor);
+          ui.notifications.info(`${actor.name}'s necrotic HP record was restored.`);
+          html.closest(".app").find(".close").click();
+        });
       }
     }, { ...dialogOptions(["poison-status"]), width: 520 }).render(true);
   }
+}
+
+async function applyTradeHubNecrotic(actor, damage) {
+  const hp = actor?.system?.attributes?.hp;
+  const amount = Math.max(0, Number(damage || 0));
+  if (!actor || !hp || !amount) return;
+  const record = actor.getFlag(MODULE_ID, "necroticHp") || {};
+  const originalMax = Number(record.originalMax ?? hp.max ?? 0);
+  const currentMax = Number(hp.max ?? 0);
+  const nextMax = Math.max(0, currentMax - amount);
+  const nextValue = Math.min(Number(hp.value ?? 0), nextMax);
+  await actor.update({
+    "system.attributes.hp.max": nextMax,
+    "system.attributes.hp.value": nextValue
+  });
+  await actor.setFlag(MODULE_ID, "necroticHp", {
+    active: true,
+    originalMax,
+    currentMax: nextMax,
+    actorName: actor.name,
+    updatedAt: Date.now()
+  });
+  await setActorStatus(actor, "necrotic", true);
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong style="color:#6a1b9a;">${escapeHtml(actor.name)} suffers necrotic HP reduction.</strong><br>Max HP reduced by <strong>${amount}</strong>: ${currentMax} → ${nextMax}</div>`
+  });
+}
+
+async function cureTradeHubNecrotic(actor) {
+  const hp = actor?.system?.attributes?.hp;
+  if (!actor || !hp) return;
+  const record = actor.getFlag(MODULE_ID, "necroticHp") || {};
+  const originalMax = Number(record.originalMax ?? hp.max ?? 0);
+  await actor.update({
+    "system.attributes.hp.max": originalMax,
+    "system.attributes.hp.value": Math.min(Number(hp.value ?? 0), originalMax)
+  });
+  await actor.unsetFlag(MODULE_ID, "necroticHp");
+  await setActorStatus(actor, "necrotic", false);
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(actor.name)} is cured of necrotic HP reduction.</strong><br>Max HP restored to <strong>${originalMax}</strong>.</div>`
+  });
 }
 
 function statusEffectsList() {
@@ -2480,16 +2565,21 @@ function activeStatusLabels(actor) {
   return Array.from(ids).map(id => byId.get(id) || id).sort((a, b) => a.localeCompare(b));
 }
 
+function statusEffectDefinition(statusId) {
+  return (CONFIG.statusEffects || []).find(entry => (entry.id || entry._id || entry.name) === statusId);
+}
+
 async function setActorStatus(actor, statusId, active) {
   if (!actor || !statusId) return;
+  const effect = statusEffectDefinition(statusId);
+  if (!effect) return;
   if (typeof actor.toggleStatusEffect === "function") {
     await actor.toggleStatusEffect(statusId, { active });
     return;
   }
   const token = actorSceneTokens(actor)[0];
   if (typeof token?.toggleEffect === "function") {
-    const effect = (CONFIG.statusEffects || []).find(entry => (entry.id || entry._id || entry.name) === statusId);
-    if (effect) await token.toggleEffect(effect, { active });
+    await token.toggleEffect(effect, { active });
   }
 }
 
