@@ -1346,6 +1346,36 @@ function extractRollTotal(result) {
   return null;
 }
 
+function waitForActorRollTotal(actor, timeoutMs = 60000) {
+  let onCreate;
+  let timer;
+  const promise = new Promise(resolve => {
+    let done = false;
+    const finish = total => {
+      if (done) return;
+      done = true;
+      Hooks.off("createChatMessage", onCreate);
+      window.clearTimeout(timer);
+      resolve(total);
+    };
+    onCreate = message => {
+      const speaker = message?.speaker || {};
+      if (speaker.actor && speaker.actor !== actor.id) return;
+      const total = extractRollTotal(message);
+      if (total != null) finish(total);
+    };
+    timer = window.setTimeout(() => finish(null), timeoutMs);
+    Hooks.on("createChatMessage", onCreate);
+  });
+  return {
+    promise,
+    cancel: () => {
+      Hooks.off("createChatMessage", onCreate);
+      window.clearTimeout(timer);
+    }
+  };
+}
+
 function marketSkillPromptHtml({ actor, label, dc, reason, manual = false, target = null }) {
   const rollLabel = target?.label ? `${target.label} ${target.kind === "ability" ? "ability" : "skill"}` : label;
   return `<div class="thm-root thm-compact">
@@ -1384,11 +1414,17 @@ async function requestMarketSkillCheck({ label, dc, skillIds, abilityIds = [], r
     }, dialogOptions()).render(true);
   });
   if (!confirmed) return null;
+  const chatRoll = waitForActorRollTotal(actor);
   const result = target.kind === "ability"
     ? await actor.rollAbilityTest(target.key, { fastForward: false, chatMessage: true })
     : await actor.rollSkill(target.key, { fastForward: false, chatMessage: true });
   const total = extractRollTotal(result);
-  if (total != null) return total;
+  if (total != null) {
+    chatRoll.cancel();
+    return total;
+  }
+  const chatTotal = await chatRoll.promise;
+  if (chatTotal != null) return chatTotal;
   ui.notifications.error(`TradeHub could not read the ${label} roll total.`);
   return null;
 }
