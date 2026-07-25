@@ -263,6 +263,8 @@ Hooks.on("renderChatMessage", (message, html) => {
     const button = ev.currentTarget;
     const payload = {
       actorId: button.dataset.actorId,
+      sceneId: button.dataset.sceneId || "",
+      tokenId: button.dataset.tokenId || "",
       amount: Number(button.dataset.amount || 0),
       reason: button.dataset.reason || "",
       extra: button.dataset.extra || "",
@@ -2369,6 +2371,8 @@ class CombatDamagePage {
           const prefix = tab === "attack" ? "" : `${tab}-`;
           requestGm("applyCombatDamage", {
             actorId: actor.id,
+            sceneId: selectedToken?.scene?.id || canvas?.scene?.id || "",
+            tokenId: selectedToken?.document?.id || "",
             context: tab,
             damageType: html.find(`#${prefix}damage-type`).val(),
             attack: Number(html.find(`#${prefix}attack-input`).val() || 0),
@@ -2939,8 +2943,8 @@ async function refreshShipTokenEffects(actor) {
   await activateShieldTokenEffect(actor);
 }
 
-function heatSinkChoiceCard({ actor, amount, reason, extra = "", attack = 0, damageType = "thermal", mode = "carryover" }) {
-  const attrs = `data-actor-id="${actor.id}" data-amount="${Number(amount || 0)}" data-reason="${escapeHtml(reason)}" data-extra="${escapeHtml(extra)}" data-attack="${Number(attack || 0)}" data-damage-type="${escapeHtml(damageType)}" data-mode="${escapeHtml(mode)}"`;
+function heatSinkChoiceCard({ actor, amount, reason, extra = "", attack = 0, damageType = "thermal", mode = "carryover", sceneId = "", tokenId = "" }) {
+  const attrs = `data-actor-id="${actor.id}" data-scene-id="${escapeHtml(sceneId)}" data-token-id="${escapeHtml(tokenId)}" data-amount="${Number(amount || 0)}" data-reason="${escapeHtml(reason)}" data-extra="${escapeHtml(extra)}" data-attack="${Number(attack || 0)}" data-damage-type="${escapeHtml(damageType)}" data-mode="${escapeHtml(mode)}"`;
   const prompt = mode === "cargo"
     ? `<b>${actor.name}</b> is about to lose cargo because <b>${escapeHtml(reason)}</b> failed.<br>Deploy a Heat Sink to protect the cargo hold?`
     : `<b>${actor.name}</b> is incurring <b>${Number(amount || 0)} Thermal Damage</b> from <b>${escapeHtml(reason)}</b>.<br>Would you like to use a Heat Sink to tank the excess damage and protect the craft?`;
@@ -2956,23 +2960,104 @@ async function markHeatSinkChoice(messageId, label) {
   await original.update({ content });
 }
 
-async function jettisonCargoFromActor(actor) {
+function cargoDropSource(actor, context = {}) {
+  const scene = game.scenes?.get(context.sceneId) || canvas?.scene;
+  let tokenDoc = context.tokenId && scene ? scene.tokens?.get(context.tokenId) : null;
+  if (!tokenDoc && scene) {
+    tokenDoc = scene.tokens?.find?.(token => token.actorId === actor.id || token.actor?.id === actor.id) || null;
+  }
+  const canvasToken = actorSceneTokens(actor)[0];
+  if (!tokenDoc && canvasToken) tokenDoc = canvasToken.document;
+  return { scene: tokenDoc?.parent || scene || canvas?.scene, tokenDoc };
+}
+
+function cargoDropPosition(scene, tokenDoc, index, total) {
+  const gridSize = Number(scene?.grid?.size || canvas?.grid?.size || 100) || 100;
+  const gridDistance = Number(scene?.grid?.distance || canvas?.scene?.grid?.distance || 5) || 5;
+  const units = String(scene?.grid?.units || canvas?.scene?.grid?.units || "").toLowerCase();
+  const radiusDistance = /ft|feet|foot/i.test(units) ? 350 * 3.28084 : 350;
+  const radiusPx = Math.max(gridSize * 2, radiusDistance / gridDistance * gridSize);
+  const centerX = Number(tokenDoc?.x || 0) + Number(tokenDoc?.width || 1) * gridSize / 2;
+  const centerY = Number(tokenDoc?.y || 0) + Number(tokenDoc?.height || 1) * gridSize / 2;
+  const angle = Math.random() * Math.PI * 2 + index * 2.399963229728653;
+  const spread = total <= 1 ? 0.25 : (index + 1) / (total + 1);
+  const distance = radiusPx * Math.max(0.12, Math.min(1, spread + (Math.random() - 0.5) * 0.24));
+  const x = centerX + Math.cos(angle) * distance - gridSize / 2;
+  const y = centerY + Math.sin(angle) * distance - gridSize / 2;
+  const maxX = Math.max(0, Number(scene?.width || x) - gridSize);
+  const maxY = Math.max(0, Number(scene?.height || y) - gridSize);
+  return {
+    x: Math.max(0, Math.min(maxX, Math.round(x))),
+    y: Math.max(0, Math.min(maxY, Math.round(y)))
+  };
+}
+
+function cargoPileItemData(item, quantity) {
+  const data = foundry.utils.deepClone(item.toObject ? item.toObject() : item);
+  delete data._id;
+  foundry.utils.setProperty(data, "system.quantity", Math.max(1, Number(quantity || 1)));
+  return data;
+}
+
+async function createDroppedCargoPile(actor, item, quantity, context, index, total) {
+  const api = game.itempiles?.API;
+  if (!api?.createItemPile) {
+    console.warn(`${MODULE_ID} | Item Piles module API not available; cargo was removed but no pile was created.`);
+    return false;
+  }
+  const { scene, tokenDoc } = cargoDropSource(actor, context);
+  if (!scene || !tokenDoc) {
+    console.warn(`${MODULE_ID} | Could not locate a source token for dropped cargo from ${actor?.name || "vehicle"}.`);
+    return false;
+  }
+  const position = cargoDropPosition(scene, tokenDoc, index, total);
+  const itemData = cargoPileItemData(item, quantity);
+  const tokenOverrides = {
+    name: `${item.name} x${Math.max(1, Number(quantity || 1))}`,
+    texture: { src: item.img || "icons/svg/item-bag.svg" }
+  };
+  const attempts = [
+    { sceneId: scene.id, position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides },
+    { sceneId: scene.id, position, items: [itemData], tokenOverrides },
+    { scene, position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides },
+    { position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides }
+  ];
+  for (const config of attempts) {
+    try {
+      await api.createItemPile(config);
+      return true;
+    } catch (err) {
+      console.debug(`${MODULE_ID} | Item Piles createItemPile attempt failed.`, err);
+    }
+  }
+  console.warn(`${MODULE_ID} | Failed to create dropped cargo item pile for ${item.name}.`);
+  return false;
+}
+
+async function jettisonCargoFromActor(actor, context = {}) {
   const cargo = actor.items.filter(item => item.type === "loot");
   if (!cargo.length) return [];
   const count = Math.min(cargo.length, Math.floor(Math.random() * 4) + 1);
   const removed = [];
+  const drops = [];
   for (let i = 0; i < count; i++) {
     const index = Math.floor(Math.random() * cargo.length);
     const item = cargo.splice(index, 1)[0];
     const quantity = Number(item.system?.quantity || 1);
     const value = parseNumber(item.system?.price?.value ?? item.system?.price ?? 0) * quantity;
     removed.push(`${item.name} x${quantity}${value ? ` (${formatGp(value)})` : ""}`);
+    drops.push({ item, quantity });
+  }
+  for (let i = 0; i < drops.length; i++) {
+    await createDroppedCargoPile(actor, drops[i].item, drops[i].quantity, context, i, drops.length);
+  }
+  for (const { item } of drops) {
     await item.delete();
   }
   return removed;
 }
 
-async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = "thermal", source = "incoming damage", allowCargoPrompt = true }) {
+async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = "thermal", source = "incoming damage", allowCargoPrompt = true, sceneId = "", tokenId = "" }) {
   let remainingDamage = Math.max(0, Number(amount || 0));
   const details = [];
   const destroyedDetails = [];
@@ -3014,9 +3099,9 @@ async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = 
       (after <= 0 ? destroyedDetails : details).push(line);
       if (before > 0 && after <= 0 && /cargo bay/i.test(module.name || "")) {
         if (allowCargoPrompt && heatSinkItem(actor)) {
-          prompts.push(heatSinkChoiceCard({ actor, amount: dealt, reason: module.name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.` }));
+          prompts.push(heatSinkChoiceCard({ actor, amount: dealt, reason: module.name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.`, sceneId, tokenId }));
         } else {
-          const removed = await jettisonCargoFromActor(actor);
+          const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
           if (removed.length) details.push(`<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.join("<br>")}</div>`);
         }
       }
@@ -4216,6 +4301,8 @@ class Transactions {
   static async applyCombatDamage(payload, userId) {
     const actor = game.actors.get(payload.actorId);
     if (!actor) throw new Error("Selected vehicle not found.");
+    const sceneId = payload.sceneId || "";
+    const tokenId = payload.tokenId || "";
     const attack = Number(payload.attack || 0);
     const damage = Math.max(0, Number(payload.damage || 0));
     const damageType = payload.damageType || "hull";
@@ -4233,7 +4320,7 @@ class Transactions {
         heatSinkPrompts.push(`<b style="color:red;">WARNING: NO HEAT SINK</b><br><b>${amount} Thermal Damage cannot be collected.</b>`);
         return false;
       }
-      heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount, reason, extra, attack, damageType, mode: "carryover" }));
+      heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount, reason, extra, attack, damageType, mode: "carryover", sceneId, tokenId }));
       return true;
     };
 
@@ -4254,7 +4341,7 @@ class Transactions {
     };
 
     const jettisonCargo = async () => {
-      const removed = await jettisonCargoFromActor(actor);
+      const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
       return removed.length ? `<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.join("<br>")}</div>` : "";
     };
 
@@ -4301,7 +4388,7 @@ class Transactions {
           const name = module.name || "";
           if (/cargo bay/i.test(name)) {
             if (heatSinkItem(actor)) {
-              heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount: Math.max(remainingDamage, dealt), reason: name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.` }));
+              heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount: Math.max(remainingDamage, dealt), reason: name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.`, sceneId, tokenId }));
             } else {
               const msg = await jettisonCargo();
               if (msg) details.push(msg);
@@ -4446,15 +4533,17 @@ class Transactions {
     const amount = Math.max(0, Number(payload.amount || 0));
     const attack = Number(payload.attack || 0);
     const damageType = payload.damageType || "thermal";
+    const sceneId = payload.sceneId || "";
+    const tokenId = payload.tokenId || "";
     await markHeatSinkChoice(payload.messageId, "Heat Sink Spared");
     if (mode === "cargo") {
-      const removed = await jettisonCargoFromActor(actor);
+      const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
       await ChatMessage.create({
         content: `<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.length ? removed.join("<br>") : "No cargo was available to jettison."}<br><span class="thm-muted">${actor.name}: ${escapeHtml(reason)}</span></div>`,
         speaker: { alias: "TradeHub Combat Damage" }
       });
     } else {
-      const result = await applyQueuedCarryoverDamage(actor, { amount, attack, damageType, source: reason, allowCargoPrompt: true });
+      const result = await applyQueuedCarryoverDamage(actor, { amount, attack, damageType, source: reason, allowCargoPrompt: true, sceneId, tokenId });
       const label = damageType === "thermal" ? "Thermal" : "Hull";
       await ChatMessage.create({
         content: `<b style="color:red;">Heat Sink Spared: ${actor.name} takes ${amount} ${label} carryover.</b><br><b>Attack was AC: ${attack || "N/A"}</b><br>${result.details.join("<br>")}${result.prompts?.length ? `<br><br>${result.prompts.join("<br>")}` : ""}`,
