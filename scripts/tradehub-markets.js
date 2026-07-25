@@ -464,6 +464,19 @@ function registerSettings() {
     type: Boolean,
     default: false
   });
+  register("warezTecDc", {
+    name: "Warez TEC DC",
+    hint: "Base DC for Warez market hacking. Discount tiers apply at this DC, then DC+1, DC+2, DC+3, and DC+4 or better.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 16
+  });
+  register("warezDiscountTier0", { name: "Warez Discount at DC", scope: "world", config: false, type: Number, default: 25 });
+  register("warezDiscountTier1", { name: "Warez Discount at DC+1", scope: "world", config: false, type: Number, default: 50 });
+  register("warezDiscountTier2", { name: "Warez Discount at DC+2", scope: "world", config: false, type: Number, default: 75 });
+  register("warezDiscountTier3", { name: "Warez Discount at DC+3", scope: "world", config: false, type: Number, default: 90 });
+  register("warezDiscountTier4", { name: "Warez Discount at DC+4 or Better", scope: "world", config: false, type: Number, default: 100 });
   register("illegalCargoStealthChecksEnabled", {
     name: "Require Stealth Checks to Sell Illegal Cargo",
     hint: "All [Illegal] cargo, including Warez, requires a Stealth check when sold. Failed checks sell the goods, forfeit illegal proceeds, and take a 35% smuggling fine from TradeHub capital.",
@@ -471,6 +484,14 @@ function registerSettings() {
     config: false,
     type: Boolean,
     default: false
+  });
+  register("illegalCargoStealthDc", {
+    name: "Illegal Cargo Stealth DC",
+    hint: "DC for selling [Illegal] cargo without being caught.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 14
   });
   register("warezHackSoundPath", {
     name: "Warez Market Hack Sound File",
@@ -753,14 +774,34 @@ function activeMarketDiscount(locationName) {
   return { percent: Math.max(0, Math.min(100, Number(discount.percent || 0))), expiresAt: Number(discount.expiresAt || 0), userId: discount.userId || "" };
 }
 
-function warezDiscountForRoll(total) {
-  const roll = Math.min(20, Math.floor(Number(total || 0)));
-  if (roll >= 20) return 100;
-  if (roll >= 19) return 90;
-  if (roll >= 18) return 75;
-  if (roll >= 17) return 50;
-  if (roll >= 16) return 25;
-  return 0;
+function clampPercent(value) {
+  return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+function warezTecDc() {
+  return Math.max(1, Math.floor(Number(setting("warezTecDc") || 16)));
+}
+
+function illegalCargoStealthDc() {
+  return Math.max(1, Math.floor(Number(setting("illegalCargoStealthDc") || 14)));
+}
+
+function warezDiscountTiers() {
+  return [
+    clampPercent(setting("warezDiscountTier0") ?? 25),
+    clampPercent(setting("warezDiscountTier1") ?? 50),
+    clampPercent(setting("warezDiscountTier2") ?? 75),
+    clampPercent(setting("warezDiscountTier3") ?? 90),
+    clampPercent(setting("warezDiscountTier4") ?? 100)
+  ];
+}
+
+function warezDiscountForRoll(total, dc = warezTecDc()) {
+  const roll = Math.floor(Number(total || 0));
+  const tier = roll - Number(dc || 16);
+  if (tier < 0) return 0;
+  const tiers = warezDiscountTiers();
+  return tiers[Math.min(tiers.length - 1, tier)] || 0;
 }
 
 const RUMOUR_TEMPLATES = [
@@ -1331,8 +1372,10 @@ function resolveMarketRollTarget(actor, candidates = [], kinds = ["skill"]) {
   if (!actor) return null;
   const wanted = new Set(candidates.map(normalizeMarketRollLabel).filter(Boolean));
   const entries = [];
-  if (kinds.includes("skill")) entries.push(...actorRollEntries(actor, "skills"));
-  if (kinds.includes("ability")) entries.push(...actorRollEntries(actor, "abilities"));
+  for (const kind of kinds) {
+    if (kind === "skill") entries.push(...actorRollEntries(actor, "skills"));
+    if (kind === "ability") entries.push(...actorRollEntries(actor, "abilities"));
+  }
   return entries.find(entry => wanted.has(normalizeMarketRollLabel(entry.key)) || wanted.has(normalizeMarketRollLabel(entry.label))) || null;
 }
 
@@ -1344,6 +1387,47 @@ function extractRollTotal(result) {
   if (typeof result.roll?.total === "number") return result.roll.total;
   if (Array.isArray(result.rolls)) return extractRollTotal(result.rolls[0]);
   return null;
+}
+
+function numericRollValue(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function customSkillConfig(key) {
+  return customAbilitiesSkillsSettings()?.customSkillList?.[key] || {};
+}
+
+function marketTargetModifier(actor, target) {
+  const value = target?.value || {};
+  const direct = numericRollValue(value.total, value.mod, value.modifier, value.bonus);
+  if (direct != null) return direct;
+  const abilityKey = value.ability || value.defaultAbility || customSkillConfig(target.key)?.ability || customSkillConfig(target.key)?.defaultAbility;
+  const ability = abilityKey ? actor?.system?.abilities?.[abilityKey] : null;
+  const abilityMod = numericRollValue(ability?.mod, ability?.total);
+  if (abilityMod != null) return abilityMod;
+  return 0;
+}
+
+async function fallbackMarketSkillRoll(actor, target, label, dc, err) {
+  console.warn(`${MODULE_ID} | Falling back to TradeHub ${label} roll after actor roll failed.`, err);
+  const mod = marketTargetModifier(actor, target);
+  const formula = `1d20 ${mod < 0 ? "-" : "+"} ${Math.abs(mod)}`;
+  const roll = new Roll(formula);
+  await roll.evaluate({ async: true });
+  const total = Number(roll.total || 0);
+  const pass = total >= Number(dc || 0);
+  await ChatMessage.create({
+    user: game.user.id,
+    speaker: ChatMessage.getSpeaker({ actor }),
+    type: CONST.CHAT_MESSAGE_TYPES.ROLL,
+    rolls: [roll],
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(label)} Check</strong><br>${escapeHtml(actor.name)} rolled <strong>${total}</strong> against DC ${Number(dc || 0)}.<br><strong class="${pass ? "thm-green" : "thm-red"}">${pass ? "PASS" : "FAIL"}</strong></div>`
+  });
+  return total;
 }
 
 function waitForActorRollTotal(actor, timeoutMs = 60000) {
@@ -1415,9 +1499,15 @@ async function requestMarketSkillCheck({ label, dc, skillIds, abilityIds = [], r
   });
   if (!confirmed) return null;
   const chatRoll = waitForActorRollTotal(actor);
-  const result = target.kind === "ability"
-    ? await actor.rollAbilityTest(target.key, { fastForward: false, chatMessage: true })
-    : await actor.rollSkill(target.key, { fastForward: false, chatMessage: true });
+  let result;
+  try {
+    result = target.kind === "ability"
+      ? await actor.rollAbilityTest(target.key, { fastForward: false, chatMessage: true })
+      : await actor.rollSkill(target.key, { fastForward: false, chatMessage: true });
+  } catch (err) {
+    chatRoll.cancel();
+    return fallbackMarketSkillRoll(actor, target, label, dc, err);
+  }
   const total = extractRollTotal(result);
   if (total != null) {
     chatRoll.cancel();
@@ -1450,26 +1540,30 @@ async function prepareSellChecks(items) {
   const hasIllegal = selected.some(isIllegalGood);
   const checks = {};
   if (hasIllegal && setting("illegalCargoStealthChecksEnabled")) {
+    const dc = illegalCargoStealthDc();
     const total = await requestMarketSkillCheck({
       label: "Stealth",
-      dc: 14,
+      dc,
       skillIds: ["ste", "stealth"],
       reason: "To sell this illegal content, this character must make a Stealth check."
     });
     if (total == null) return null;
     checks.illegalStealthTotal = total;
+    checks.illegalStealthDc = dc;
   }
   if (hasWarez && setting("warezMarketHackEnabled")) {
+    const dc = warezTecDc();
     const total = await requestMarketSkillCheck({
       label: "TEC",
-      dc: 16,
-      skillIds: ["tec", "technology", "tech"],
+      dc,
       abilityIds: ["tec", "technology", "tech"],
-      kinds: ["skill", "ability"],
+      skillIds: ["tec", "technology", "tech"],
+      kinds: ["ability", "skill"],
       reason: "To hack the market with Warez [Illegal], this character must make a TEC check."
     });
     if (total == null) return null;
     checks.warezTecTotal = total;
+    checks.warezTecDc = dc;
   }
   return checks;
 }
@@ -3431,6 +3525,13 @@ class TradeHubSettingsForm extends FormApplication {
         poisonMovementSoundVolume: Number(setting("poisonMovementSoundVolume") ?? 0.8).toFixed(2),
         warezMarketHackEnabled: !!setting("warezMarketHackEnabled"),
         illegalCargoStealthChecksEnabled: !!setting("illegalCargoStealthChecksEnabled"),
+        warezTecDc: Number(setting("warezTecDc") || 16),
+        warezDiscountTier0: Number(setting("warezDiscountTier0") ?? 25),
+        warezDiscountTier1: Number(setting("warezDiscountTier1") ?? 50),
+        warezDiscountTier2: Number(setting("warezDiscountTier2") ?? 75),
+        warezDiscountTier3: Number(setting("warezDiscountTier3") ?? 90),
+        warezDiscountTier4: Number(setting("warezDiscountTier4") ?? 100),
+        illegalCargoStealthDc: Number(setting("illegalCargoStealthDc") || 14),
         warezHackSoundPath: setting("warezHackSoundPath") || "",
         warezHackSoundVolume: Number(setting("warezHackSoundVolume") ?? 0.8).toFixed(2),
         vehicleLabel: setting("vehicleLabel") || "Vessel",
@@ -3524,6 +3625,13 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("poisonMovementSoundVolume", Math.max(0, Math.min(1, Number(formData.poisonMovementSoundVolume ?? 0.8))));
     await setSetting("warezMarketHackEnabled", !!formData.warezMarketHackEnabled);
     await setSetting("illegalCargoStealthChecksEnabled", !!formData.illegalCargoStealthChecksEnabled);
+    await setSetting("warezTecDc", Math.max(1, Number(formData.warezTecDc || 16)));
+    await setSetting("warezDiscountTier0", clampPercent(formData.warezDiscountTier0 ?? 25));
+    await setSetting("warezDiscountTier1", clampPercent(formData.warezDiscountTier1 ?? 50));
+    await setSetting("warezDiscountTier2", clampPercent(formData.warezDiscountTier2 ?? 75));
+    await setSetting("warezDiscountTier3", clampPercent(formData.warezDiscountTier3 ?? 90));
+    await setSetting("warezDiscountTier4", clampPercent(formData.warezDiscountTier4 ?? 100));
+    await setSetting("illegalCargoStealthDc", Math.max(1, Number(formData.illegalCargoStealthDc || 14)));
     await setSetting("warezHackSoundVolume", Math.max(0, Math.min(1, Number(formData.warezHackSoundVolume ?? 0.8))));
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
@@ -4233,6 +4341,7 @@ class Transactions {
     const soldLines = [];
     const soldWarez = [];
     const soldIllegal = [];
+    const userName = game.users.get(userId)?.name || "A player";
     for (const entry of items) {
       const row = rows.find(r => r.name === entry.name);
       const item = ship.items.getName(entry.name);
@@ -4251,7 +4360,14 @@ class Transactions {
       data.markets[location][row.name].stock = Number(data.markets[location][row.name].stock || 0) + qty;
       data.markets[location][row.name].lastPaid = row.price;
     }
-    const stealthFailure = setting("illegalCargoStealthChecksEnabled") && soldIllegal.length && Number(checks.illegalStealthTotal || 0) < 14;
+    const stealthDc = Number(checks.illegalStealthDc || illegalCargoStealthDc());
+    const stealthTotal = Number(checks.illegalStealthTotal || 0);
+    const stealthFailure = setting("illegalCargoStealthChecksEnabled") && soldIllegal.length && stealthTotal < stealthDc;
+    if (setting("illegalCargoStealthChecksEnabled") && soldIllegal.length) {
+      await ChatMessage.create({
+        content: `<div class="thm-chat-card"><strong>Illegal Cargo Stealth Check</strong><br>${escapeHtml(userName)} rolled <strong>${stealthTotal}</strong> against DC ${stealthDc} while selling [Illegal] cargo at ${escapeHtml(location)}.<br><strong class="${stealthFailure ? "thm-red" : "thm-green"}">${stealthFailure ? "FAIL: Smuggling detected." : "PASS: Illegal cargo sold quietly."}</strong></div>`
+      });
+    }
     for (const { row, qty, lineTotal, illegal } of soldLines) {
       if (stealthFailure && illegal) {
         forfeitedIllegalTotal += lineTotal;
@@ -4263,16 +4379,20 @@ class Transactions {
     }
     if (setting("warezMarketHackEnabled") && soldWarez.length) {
       broadcastWarezHackEffects();
-      const discount = warezDiscountForRoll(checks.warezTecTotal);
+      const tecDc = Number(checks.warezTecDc || warezTecDc());
+      const discount = warezDiscountForRoll(checks.warezTecTotal, tecDc);
       const tecTotal = Number(checks.warezTecTotal || 0);
+      await ChatMessage.create({
+        content: `<div class="thm-chat-card"><strong>Warez Market Hack</strong><br>${escapeHtml(userName)} rolled <strong>${tecTotal}</strong> against DC ${tecDc} at ${escapeHtml(location)}.<br><strong class="${discount > 0 ? "thm-green" : "thm-red"}">${discount > 0 ? `PASS: Market prices destabilized by ${discount}%.` : "FAIL: No market discount applied."}</strong></div>`
+      });
       if (discount > 0) {
         data.marketDiscounts ||= {};
         data.marketDiscounts[location] = { percent: discount, expiresAt: Date.now() + 10 * 60 * 1000, userId };
-        await ChatMessage.create({ content: `<strong>${escapeHtml(game.users.get(userId)?.name || "A player")} has used illegal Warez to favorably crash the market!</strong><br>Prices are <strong>${discount}% off</strong> at ${escapeHtml(location)} for the next 10 minutes.` });
-      } else if (tecTotal < 16) {
+        await ChatMessage.create({ content: `<strong>${escapeHtml(userName)} has used illegal Warez to favorably crash the market!</strong><br>Prices are <strong>${discount}% off</strong> at ${escapeHtml(location)} for the next 10 minutes.` });
+      } else {
         await ChatMessage.create({
           whisper: ChatMessage.getWhisperRecipients("GM").map(user => user.id),
-          content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} sold illegal Warez at ${escapeHtml(location)} and failed the TEC check. No market discount was applied.`
+          content: `<strong>TradeHub Smuggling Alert</strong><br>${escapeHtml(userName)} sold illegal Warez at ${escapeHtml(location)} and failed the TEC check. No market discount was applied.`
         });
       }
     }
@@ -4285,7 +4405,7 @@ class Transactions {
     await setSetting("data", data);
     if (stealthFailure) {
       await ChatMessage.create({
-        content: `<strong>TradeHub Illegal Cargo Sale</strong><br>${escapeHtml(game.users.get(userId)?.name || "A player")} failed a Stealth check while selling illegal cargo at ${escapeHtml(location)}.<br>Illegal sale completed, but ${formatGp(forfeitedIllegalTotal)} was forfeited and a ${formatGp(illegalFine)} fine was taken from TradeHub capital.<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
+        content: `<strong>TradeHub Illegal Cargo Sale</strong><br>${escapeHtml(userName)} failed a Stealth check while selling illegal cargo at ${escapeHtml(location)}.<br>Illegal sale completed, but ${formatGp(forfeitedIllegalTotal)} was forfeited and a ${formatGp(illegalFine)} fine was taken from TradeHub capital.<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
       });
     }
     await chatReceipt("Cargo Sold by", userId, receipt, `Total Gain of Goods: ${formatGp(total)}`, `TradeHub Capital: ${formatGp(bankBalance())}`, "Funds added to TradeHub capital, thank you for trading with TradeHub(TM)");
