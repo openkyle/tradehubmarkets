@@ -837,6 +837,35 @@
   font-weight: 800;
 }
 
+.thm-sheet-shiptools {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: rgba(245, 243, 226, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thm-sheet-shiptools-capital {
+  color: var(--thm-green);
+  font-weight: 900;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.thm-sheet-shiptools button {
+  min-height: 30px;
+  width: 100%;
+  font-weight: 800;
+  font-size: 0.9em;
+  line-height: 1.1;
+}
+
+.thm-sheet-shiptools button i {
+  margin-right: 6px;
+}
+
 .thm-damage-tool label {
   display: block;
   margin: 8px 0 3px;

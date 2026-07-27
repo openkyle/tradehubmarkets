@@ -282,6 +282,10 @@ Hooks.on("renderSceneControls", () => {
   if (game.user.isGM && setting("showGmBar")) GmBar.render();
 });
 
+Hooks.on("renderActorSheet", injectVehicleSheetTools);
+Hooks.on("renderTidy5eActorSheet", injectVehicleSheetTools);
+Hooks.on("renderTidy5eSheet", injectVehicleSheetTools);
+
 Hooks.on("createItem", item => {
   const actor = item?.parent;
   if (!game.user.isGM || actor?.type !== "vehicle" || !["equipment", "weapon"].includes(item?.type)) return;
@@ -552,6 +556,14 @@ function registerSettings() {
     type: Boolean,
     default: true,
     onChange: value => value ? GmBar.render() : GmBar.close()
+  });
+  register("showVehicleSheetTools", {
+    name: "Show Ship Tools Buttons on Vehicle Sheets",
+    hint: "Injects TradeHub Loadout, Cargo, Long Rest, Registration, and Fuel Release buttons into dnd5e and Tidy5e vehicle sheets.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: true
   });
   register("gmBarPosition", { scope: "client", config: false, type: Object, default: { left: 12, top: 120 } });
   register("launchOnDock", {
@@ -2279,6 +2291,60 @@ function hpBarHtml(ship) {
   return `<div class="thm-hp-bar thm-shiptools-hp"><div class="thm-hp-fill" style="width:${pct}%; background:${color};"></div><div class="thm-hp-label">${value} / ${max}</div></div>`;
 }
 
+function injectVehicleSheetTools(app, html) {
+  const actor = app?.actor || app?.document;
+  if (!setting("showVehicleSheetTools") || !actor || actor.type !== "vehicle") return;
+  if (!actor.testUserPermission?.(game.user, "OWNER")) return;
+  const root = html?.jquery ? html : $(html);
+  if (!root?.length || root.find(".thm-sheet-shiptools").length) return;
+  const panel = $(vehicleSheetToolsHtml(actor));
+  const target = findConditionImmunityInsertion(root);
+  if (target?.length) target.after(panel);
+  else {
+    const fallback = root.find(".traits, .attributes, .sheet-sidebar, .sidebar, .left-pane, .left-column").first();
+    if (fallback.length) fallback.append(panel);
+    else root.find("form").first().prepend(panel);
+  }
+  bindVehicleSheetTools(panel, actor);
+}
+
+function vehicleSheetToolsHtml(_actor) {
+  return `<div class="tradehub-markets thm-sheet-shiptools">
+    <div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>
+    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-list"></i> View Loadout</button>
+    <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
+    <button type="button" data-thm-sheet-tool="rest"><i class="fas fa-bed"></i> Long Rest</button>
+    <button type="button" data-thm-sheet-tool="registration"><i class="fas fa-registered"></i> Registration</button>
+    <button type="button" data-thm-sheet-tool="fuel"><i class="fas fa-fire"></i> Fuel Release</button>
+  </div>`;
+}
+
+function findConditionImmunityInsertion(root) {
+  const labels = root.find("*").filter((_i, el) => /^Condition Immunities\b/i.test($(el).clone().children().remove().end().text().trim()));
+  for (const el of labels.toArray().reverse()) {
+    const preferred = $(el).closest(".form-group, .trait, .traits-list, .attribute, .card, li, section");
+    if (preferred.length && !preferred.is(root)) return preferred.first();
+    const fallback = $(el).closest("div");
+    if (fallback.length && !fallback.is(root)) return fallback.first();
+  }
+  return $();
+}
+
+function bindVehicleSheetTools(panel, actor) {
+  panel.find("[data-thm-sheet-tool]").on("click", ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    selectedShipId = actor.id;
+    selectedShipName = actor.name;
+    const tool = ev.currentTarget.dataset.thmSheetTool;
+    if (tool === "loadout") return ShipToolsPage.showLoadout(actor);
+    if (tool === "cargo") return ShipToolsPage.showCargo(actor);
+    if (tool === "rest") return ShipToolsPage.confirmLongRest(actor);
+    if (tool === "registration") return ShipToolsPage.showRegistration(actor);
+    if (tool === "fuel") return ShipToolsPage.showFuelRelease(actor);
+  });
+}
+
 class ShipToolsPage {
   static async show() {
     const ships = accessibleShips().map(ship => game.actors.get(ship.id) || ship).filter(Boolean);
@@ -3597,6 +3663,7 @@ class TradeHubSettingsForm extends FormApplication {
         enableTradeRumours: !!setting("enableTradeRumours"),
         launchOnDock: !!setting("launchOnDock"),
         requireConsumableForPlayerRest: !!setting("requireConsumableForPlayerRest"),
+        showVehicleSheetTools: !!setting("showVehicleSheetTools"),
         showGmBar: !!setting("showGmBar"),
         capital: Number(data.capital || 0),
         newsJournalUuid: tradeHubNewsJournal()?.uuid || ""
@@ -3695,6 +3762,7 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("enableTradeRumours", !!formData.enableTradeRumours);
     await setSetting("launchOnDock", !!formData.launchOnDock);
     await setSetting("requireConsumableForPlayerRest", !!formData.requireConsumableForPlayerRest);
+    await setSetting("showVehicleSheetTools", !!formData.showVehicleSheetTools);
     await setSetting("restConsumableExcludedUsers", rawForm ? rawForm.getAll("restConsumableExcludedUsers") : []);
     await setSetting("showGmBar", !!formData.showGmBar);
     data.capital = Number(formData.capital || 0);
