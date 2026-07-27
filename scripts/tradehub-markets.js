@@ -51,6 +51,7 @@ const setSetting = (key, value) => game.settings.set(MODULE_ID, key, value);
 const formatGp = value => `${Number(Math.floor(value || 0)).toLocaleString()} GP`;
 const stripHtml = html => String(html || "").replace(/<[^>]*>/g, "").trim();
 const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms));
 const parseNumber = value => {
   if (typeof value === "number") return value;
   const match = String(value ?? "").match(/-?\d[\d,]*(\.\d+)?/);
@@ -616,6 +617,7 @@ function normalizeLocationData(data) {
     }
     loc.name ||= name;
     loc.mode = "docked";
+    if (loc.supplyRestock == null) loc.supplyRestock = true;
     loc.useIn = !!loc.useIn;
   }
   data.marketDiscounts ||= {};
@@ -688,7 +690,7 @@ function itemFromDocument(doc) {
 function currentLocation() {
   const data = getData();
   const name = data.currentLocation || "";
-  return data.locations[name] || { name: name || "No Location", mode: "", sellsIllegal: false, hasShipyard: false, stateOfEmergency: false, uninhabited: true, useIn: false };
+  return data.locations[name] || { name: name || "No Location", mode: "", sellsIllegal: false, hasShipyard: false, supplyRestock: true, stateOfEmergency: false, uninhabited: true, useIn: false };
 }
 
 function serviceState() {
@@ -701,7 +703,7 @@ function serviceState() {
     markets: docked && !uninhabited,
     buy: docked && !uninhabited,
     sell: docked && !uninhabited,
-    restock: docked && !emergency && !uninhabited,
+    restock: docked && !emergency && !uninhabited && loc.supplyRestock !== false,
     repair: docked && !emergency && !uninhabited,
     shipyard: docked && loc.hasShipyard && !emergency && !uninhabited,
     any: docked
@@ -1232,7 +1234,7 @@ class SplashPage {
         <button id="thm-sell" ${state.sell ? "" : "disabled"}>Sell Cargo</button>
         <button id="thm-shipyard" ${state.shipyard ? "" : "disabled"}>${state.loc.hasShipyard ? "Shipyard" : "No Shipyard"}</button>
       </div>
-      <button class="thm-full-button" id="thm-restock" ${state.restock ? "" : "disabled"}>${state.loc.stateOfEmergency ? "Supply Restock - Emergency Only" : "Supply Restock"}</button>
+      <button class="thm-full-button" id="thm-restock" ${state.restock ? "" : "disabled"}>${state.loc.stateOfEmergency ? "Supply Restock - Emergency Only" : (state.loc.supplyRestock === false ? "No Supply Restock" : "Supply Restock")}</button>
       <button class="thm-full-button" id="thm-repair" ${state.repair ? "" : "disabled"}>Repair ${label}</button>
     </div>`;
     const dialog = new Dialog({
@@ -1316,6 +1318,25 @@ function playerSkillActor() {
   if (assigned?.type !== "vehicle") return assigned;
   const controlled = canvas.tokens?.controlled?.find(token => token.actor && token.actor.type !== "vehicle")?.actor;
   return controlled || game.actors.contents.find(actor => actor.type !== "vehicle" && actor.testUserPermission?.(game.user, "OWNER"));
+}
+
+function actorNameForUser(userId, fallback = "A player") {
+  const user = game.users.get(userId);
+  const actor = user?.character;
+  return actor?.type !== "vehicle" ? actor?.name || user?.name || fallback : user?.name || fallback;
+}
+
+function marketCheckActorFromChecks(checks = {}, userId = game.user.id) {
+  return game.actors.get(checks.actorId) || game.users.get(userId)?.character || null;
+}
+
+async function marketCheckResultCard({ title, actor, total, dc, location = "", successText, failureText }) {
+  const pass = Number(total || 0) >= Number(dc || 0);
+  await ChatMessage.create({
+    speaker: actor ? ChatMessage.getSpeaker({ actor }) : undefined,
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(title)}</strong><br>${escapeHtml(actor?.name || game.user.name || "Acting Character")} rolled <strong>${Number(total || 0)}</strong> against DC ${Number(dc || 0)}${location ? ` at ${escapeHtml(location)}` : ""}.<br><strong class="${pass ? "thm-green" : "thm-red"}">${pass ? successText : failureText}</strong></div>`
+  });
+  return pass;
 }
 
 function normalizeMarketRollLabel(value) {
@@ -1419,13 +1440,12 @@ async function fallbackMarketSkillRoll(actor, target, label, dc, err) {
   const roll = new Roll(formula);
   await roll.evaluate({ async: true });
   const total = Number(roll.total || 0);
-  const pass = total >= Number(dc || 0);
   await ChatMessage.create({
     user: game.user.id,
     speaker: ChatMessage.getSpeaker({ actor }),
     type: CONST.CHAT_MESSAGE_TYPES.ROLL,
     rolls: [roll],
-    content: `<div class="thm-chat-card"><strong>${escapeHtml(label)} Check</strong><br>${escapeHtml(actor.name)} rolled <strong>${total}</strong> against DC ${Number(dc || 0)}.<br><strong class="${pass ? "thm-green" : "thm-red"}">${pass ? "PASS" : "FAIL"}</strong></div>`
+    content: `<div class="thm-chat-card"><strong>${escapeHtml(label)} Check</strong><br>${escapeHtml(actor.name)} rolls ${escapeHtml(formula)}.</div>`
   });
   return total;
 }
@@ -1539,6 +1559,10 @@ async function prepareSellChecks(items) {
   const hasWarez = selected.some(isWarezGood);
   const hasIllegal = selected.some(isIllegalGood);
   const checks = {};
+  const actor = playerSkillActor();
+  checks.actorId = actor?.id || "";
+  checks.actorName = actor?.name || game.user.character?.name || game.user.name || "A player";
+  checks.location = currentLocation().name;
   if (hasIllegal && setting("illegalCargoStealthChecksEnabled")) {
     const dc = illegalCargoStealthDc();
     const total = await requestMarketSkillCheck({
@@ -1550,8 +1574,19 @@ async function prepareSellChecks(items) {
     if (total == null) return null;
     checks.illegalStealthTotal = total;
     checks.illegalStealthDc = dc;
+    await marketCheckResultCard({
+      title: "Illegal Cargo Stealth Check",
+      actor,
+      total,
+      dc,
+      location: checks.location,
+      successText: "PASS: Illegal cargo sold quietly.",
+      failureText: "FAIL: Smuggling detected."
+    });
   }
   if (hasWarez && setting("warezMarketHackEnabled")) {
+    broadcastWarezHackEffects();
+    await sleep(1900);
     const dc = warezTecDc();
     const total = await requestMarketSkillCheck({
       label: "TEC",
@@ -1564,6 +1599,16 @@ async function prepareSellChecks(items) {
     if (total == null) return null;
     checks.warezTecTotal = total;
     checks.warezTecDc = dc;
+    const discount = warezDiscountForRoll(total, dc);
+    await marketCheckResultCard({
+      title: "Warez Market Hack",
+      actor,
+      total,
+      dc,
+      location: checks.location,
+      successText: `PASS: Market prices destabilized by ${discount}%.`,
+      failureText: "FAIL: No market discount applied."
+    });
   }
   return checks;
 }
@@ -1589,10 +1634,15 @@ class MarketDialog {
       const max = sellMode ? owned : (row.emrg ? 0 : row.stock);
       const profit = sellMode ? this.profitText(row) : this.changeText(row);
       const marketSort = sellMode ? this.profitSortValue(row) : this.buyMarketSortValue(row);
-      const priceDisplay = !sellMode && row.emrg ? "EMRG" : row.price.toFixed(2);
+      const hacked = !sellMode && Number(row.marketDiscount || 0) > 0;
+      const priceDisplay = !sellMode && row.emrg
+        ? "EMRG"
+        : hacked
+          ? `<span class="thm-hacked-price">${row.price.toFixed(2)}<br>[HACKED - ${Number(row.marketDiscount || 0)}% OFF]</span>`
+          : row.price.toFixed(2);
       return `<tr data-key="${key}" data-name="${row.name}" data-price="${row.price}" data-weight="${row.weight}" data-max="${max}">
         <td><div class="thm-item-cell"><img src="${row.img}" data-uuid="${row.uuid}"><span class="thm-item-name" data-uuid="${row.uuid}">${row.name}</span></div></td>
-        <td class="thm-center">${priceDisplay}</td>
+        <td class="thm-center ${hacked ? "thm-hacked-cell" : ""}">${priceDisplay}</td>
         <td class="thm-center">${Math.ceil(row.weight)}</td>
         <td class="thm-center" data-sort-value="${marketSort}">${profit}</td>
         <td class="thm-center">${sellMode ? owned : row.stock}</td>
@@ -1961,6 +2011,7 @@ class DockingPage {
       <div class="thm-docking-check-grid">
         <label><span>Sells Illegal</span><input type="checkbox" id="illegal"></label>
         <label><span>Has a Shipyard</span><input type="checkbox" id="shipyard"></label>
+        <label><span>Supply Restock Available</span><input type="checkbox" id="supply-restock"></label>
         <label><span>Clear All Last Paid Prices</span><input type="checkbox" id="clear"></label>
         <label><span>Force Player Profit</span><input type="checkbox" id="profit"></label>
         <label><span>Play Dock Sound</span><input type="checkbox" id="play-sound" ${setting("dockSoundPath") ? "checked" : ""}></label>
@@ -1980,6 +2031,7 @@ class DockingPage {
           const loc = data.locations[html.find("#loc").val()] || {};
           html.find("#illegal").prop("checked", !!loc.sellsIllegal);
           html.find("#shipyard").prop("checked", !!loc.hasShipyard);
+          html.find("#supply-restock").prop("checked", loc.supplyRestock !== false);
           html.find("#use-in").prop("checked", !!loc.useIn);
           html.find("#market-state").val(loc.uninhabited ? "uninhabited" : (loc.stateOfEmergency ? "emergency" : "available"));
           toggleMarketControls(html);
@@ -2012,6 +2064,7 @@ class DockingPage {
       mode: "docked",
       sellsIllegal: html.find("#illegal").prop("checked"),
       hasShipyard: html.find("#shipyard").prop("checked"),
+      supplyRestock: html.find("#supply-restock").prop("checked"),
       stateOfEmergency: html.find("#market-state").val() === "emergency",
       uninhabited: html.find("#market-state").val() === "uninhabited",
       useIn: html.find("#use-in").prop("checked"),
@@ -2024,14 +2077,14 @@ class DockingPage {
 
 function toggleMarketControls(html) {
   const uninhabited = html.find("#market-state").val() === "uninhabited";
-  html.find("#illegal, #shipyard, #profit").prop("disabled", uninhabited);
-  if (uninhabited) html.find("#illegal, #shipyard, #profit").prop("checked", false);
+  html.find("#illegal, #shipyard, #supply-restock, #profit").prop("disabled", uninhabited);
+  if (uninhabited) html.find("#illegal, #shipyard, #supply-restock, #profit").prop("checked", false);
 }
 
 function toggleDeleteLocationMode(html) {
   const deleting = html.find("#delete-location").prop("checked");
   html.closest(".app").find('button[data-button="dock"]').html(deleting ? "<b>Delete Location</b>" : "<b>Dock / Travel</b>");
-  html.find("#market-state, #illegal, #shipyard, #clear, #profit, #play-sound, #use-in").prop("disabled", deleting);
+  html.find("#market-state, #illegal, #shipyard, #supply-restock, #clear, #profit, #play-sound, #use-in").prop("disabled", deleting);
   if (!deleting) toggleMarketControls(html);
 }
 
@@ -4322,7 +4375,7 @@ class Transactions {
       data.markets[location][row.name].stock = Math.max(0, data.markets[location][row.name].stock - qty);
       data.markets[location][row.name].lastPaid = row.price;
     }
-    await updateBank(bankBalance() - total);
+    data.capital = Math.max(0, Number(data.capital || 0) - total);
     syncShipDirectory(data);
     await setSetting("data", data);
     await chatReceipt("Cargo Purchased by", userId, receipt, `Total Cost of Goods: ${formatGp(total)}`, `TradeHub Capital: ${formatGp(bankBalance())}`, "Funds transferred from TradeHub capital, thank you for shopping with TradeHub(TM)");
@@ -4341,7 +4394,8 @@ class Transactions {
     const soldLines = [];
     const soldWarez = [];
     const soldIllegal = [];
-    const userName = game.users.get(userId)?.name || "A player";
+    const userName = checks.actorName || actorNameForUser(userId);
+    const checkActor = marketCheckActorFromChecks(checks, userId);
     for (const entry of items) {
       const row = rows.find(r => r.name === entry.name);
       const item = ship.items.getName(entry.name);
@@ -4363,11 +4417,6 @@ class Transactions {
     const stealthDc = Number(checks.illegalStealthDc || illegalCargoStealthDc());
     const stealthTotal = Number(checks.illegalStealthTotal || 0);
     const stealthFailure = setting("illegalCargoStealthChecksEnabled") && soldIllegal.length && stealthTotal < stealthDc;
-    if (setting("illegalCargoStealthChecksEnabled") && soldIllegal.length) {
-      await ChatMessage.create({
-        content: `<div class="thm-chat-card"><strong>Illegal Cargo Stealth Check</strong><br>${escapeHtml(userName)} rolled <strong>${stealthTotal}</strong> against DC ${stealthDc} while selling [Illegal] cargo at ${escapeHtml(location)}.<br><strong class="${stealthFailure ? "thm-red" : "thm-green"}">${stealthFailure ? "FAIL: Smuggling detected." : "PASS: Illegal cargo sold quietly."}</strong></div>`
-      });
-    }
     for (const { row, qty, lineTotal, illegal } of soldLines) {
       if (stealthFailure && illegal) {
         forfeitedIllegalTotal += lineTotal;
@@ -4378,13 +4427,8 @@ class Transactions {
       }
     }
     if (setting("warezMarketHackEnabled") && soldWarez.length) {
-      broadcastWarezHackEffects();
       const tecDc = Number(checks.warezTecDc || warezTecDc());
       const discount = warezDiscountForRoll(checks.warezTecTotal, tecDc);
-      const tecTotal = Number(checks.warezTecTotal || 0);
-      await ChatMessage.create({
-        content: `<div class="thm-chat-card"><strong>Warez Market Hack</strong><br>${escapeHtml(userName)} rolled <strong>${tecTotal}</strong> against DC ${tecDc} at ${escapeHtml(location)}.<br><strong class="${discount > 0 ? "thm-green" : "thm-red"}">${discount > 0 ? `PASS: Market prices destabilized by ${discount}%.` : "FAIL: No market discount applied."}</strong></div>`
-      });
       if (discount > 0) {
         data.marketDiscounts ||= {};
         data.marketDiscounts[location] = { percent: discount, expiresAt: Date.now() + 10 * 60 * 1000, userId };
@@ -4397,19 +4441,22 @@ class Transactions {
       }
     }
     if (stealthFailure) {
-      illegalFine = Math.floor(forfeitedIllegalTotal * 0.35);
+      const illegalItemCount = new Set(soldIllegal.map(entry => entry.row.name)).size;
+      illegalFine = illegalItemCount * 2000;
       receipt.push(`<span class="thm-red">Smuggling fine assessed: ${formatGp(illegalFine)}</span>`);
+      if (checkActor) await setActorWanted(checkActor, true);
     }
-    await updateBank(bankBalance() + total - illegalFine);
+    data.capital = Math.max(0, Number(data.capital || 0) + total - illegalFine);
     syncShipDirectory(data);
     await setSetting("data", data);
     if (stealthFailure) {
       await ChatMessage.create({
-        content: `<strong>TradeHub Illegal Cargo Sale</strong><br>${escapeHtml(userName)} failed a Stealth check while selling illegal cargo at ${escapeHtml(location)}.<br>Illegal sale completed, but ${formatGp(forfeitedIllegalTotal)} was forfeited and a ${formatGp(illegalFine)} fine was taken from TradeHub capital.<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
+        content: `<strong>TradeHub Illegal Cargo Sale</strong><br>${escapeHtml(userName)} failed a Stealth check while selling illegal cargo at ${escapeHtml(location)}.<br>Illegal sale completed, but ${formatGp(forfeitedIllegalTotal)} was forfeited and a ${formatGp(illegalFine)} fine was taken from TradeHub capital.<br><strong>[Wanted]</strong> status issued.<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
       });
     }
-    await chatReceipt("Cargo Sold by", userId, receipt, `Total Gain of Goods: ${formatGp(total)}`, `TradeHub Capital: ${formatGp(bankBalance())}`, "Funds added to TradeHub capital, thank you for trading with TradeHub(TM)");
+    await chatReceipt("Cargo Sold by", userId, receipt, `Total Gain of Goods: ${formatGp(total)}`, `TradeHub Capital: ${formatGp(bankBalance())}`, "Funds added to TradeHub capital, thank you for trading with TradeHub(TM)", userName);
     broadcastRefresh();
+    SplashPage.refreshSplash();
   }
 
   static async restock({ shipId, items }, userId) {
@@ -4476,6 +4523,7 @@ class Transactions {
       mode: payload.mode,
       sellsIllegal: payload.sellsIllegal,
       hasShipyard: payload.hasShipyard,
+      supplyRestock: payload.supplyRestock !== false,
       stateOfEmergency: payload.stateOfEmergency,
       uninhabited: payload.uninhabited,
       useIn: !!payload.useIn
@@ -4488,6 +4536,7 @@ class Transactions {
     if (!payload.uninhabited) await ensureMarket(payload.name, { regenerate: true, clearLastPaid: payload.clearLastPaid, forceProfit: payload.forceProfit });
     const services = payload.uninhabited ? [`<span style="color: gray;"><b>UNINHABITED: Markets unavailable</b></span>`] : [`+ Markets`];
     if (payload.sellsIllegal) services.push(`<span style="color: purple;"><b>+ BlackMarket</b></span>`);
+    if (payload.supplyRestock === false) services.push(`<span style="color: gray;"><b>- Supply Restock</b></span>`);
     if (payload.hasShipyard) services.push(`<span style="color: green;"><b>+ Shipyard</b></span>`);
     if (payload.stateOfEmergency) services.push(`<span style="color: red;"><b>WARNING: STATE OF EMERGENCY DECLARED</b></span>`);
     await ChatMessage.create({ content: `<p style="color:green; font-weight:bold;">SUCCESS: Docked ${locationPhrase(data.locations[payload.name])}</p><p style="font-weight:bold;">TradeHub Markets Updated!</p>${services.join("<br>")}` });
@@ -5000,9 +5049,9 @@ async function transferShipItems(oldShip, newShip, sellModules) {
   });
 }
 
-async function chatReceipt(title, userId, lines, total, balance, footer) {
+async function chatReceipt(title, userId, lines, total, balance, footer, actorName = "") {
   if (!lines.length) return;
   await ChatMessage.create({
-    content: `<strong>${title}:</strong><br>${game.users.get(userId)?.name || "A player"}<br><br><strong>Receipt:</strong><br>${lines.join("<br>")}<br><br><strong>${total}</strong><br>(Rounded Down)<br><br><strong>${balance}</strong><br><em>${footer}</em>`
+    content: `<strong>${title}:</strong><br>${escapeHtml(actorName || actorNameForUser(userId))}<br><br><strong>Receipt:</strong><br>${lines.join("<br>")}<br><br><strong>${total}</strong><br>(Rounded Down)<br><br><strong>${balance}</strong><br><em>${footer}</em>`
   });
 }

@@ -136,6 +136,16 @@
 .thm-green { color: var(--thm-green); }
 .thm-red { color: var(--thm-red); }
 .thm-muted { color: var(--thm-muted); }
+.thm-hacked-cell,
+.thm-hacked-price {
+  color: #d86f00;
+  font-weight: 900;
+}
+
+.thm-hacked-price {
+  display: inline-block;
+  line-height: 1.15;
+}
 
 .thm-row {
   display: flex;
