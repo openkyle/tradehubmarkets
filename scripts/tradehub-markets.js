@@ -1202,6 +1202,7 @@ async function processGmRequest(message) {
     if (message.action === "shipFuelPurge") return Transactions.shipFuelPurge(message.payload, message.userId);
     if (message.action === "shipFuelScoop") return Transactions.shipFuelScoop(message.payload, message.userId);
     if (message.action === "applyCombatDamage") return Transactions.applyCombatDamage(message.payload, message.userId);
+    if (message.action === "performShipScan") return Transactions.performShipScan(message.payload, message.userId);
     if (message.action === "deployHeatSink") return Transactions.deployHeatSink(message.payload, message.userId);
     if (message.action === "declineHeatSink") return Transactions.declineHeatSink(message.payload, message.userId);
     if (message.action === "combatRepair") return Transactions.combatRepair(message.payload, message.userId);
@@ -2296,8 +2297,14 @@ function injectVehicleSheetTools(app, html) {
   if (!setting("showVehicleSheetTools") || !actor || actor.type !== "vehicle") return;
   if (!actor.testUserPermission?.(game.user, "OWNER")) return;
   const root = html?.jquery ? html : $(html);
-  if (!root?.length || root.find(".thm-sheet-shiptools").length) return;
-  const panel = $(vehicleSheetToolsHtml(actor));
+  if (!root?.length) return;
+  placeVehicleSheetTools(root, actor);
+  window.setTimeout(() => placeVehicleSheetTools(root, actor), 100);
+}
+
+function placeVehicleSheetTools(root, actor) {
+  let panel = root.find(".thm-sheet-shiptools").first();
+  if (!panel.length) panel = $(vehicleSheetToolsHtml(actor));
   const target = findConditionImmunityInsertion(root);
   if (target?.length) target.after(panel);
   else {
@@ -2305,13 +2312,16 @@ function injectVehicleSheetTools(app, html) {
     if (fallback.length) fallback.append(panel);
     else root.find("form").first().prepend(panel);
   }
-  bindVehicleSheetTools(panel, actor);
+  if (panel.attr("data-thm-bound") !== "true") {
+    panel.attr("data-thm-bound", "true");
+    bindVehicleSheetTools(panel, actor);
+  }
 }
 
 function vehicleSheetToolsHtml(_actor) {
   return `<div class="tradehub-markets thm-sheet-shiptools">
     <div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>
-    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-list"></i> View Loadout</button>
+    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-print"></i> Print Loadout</button>
     <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
     <button type="button" data-thm-sheet-tool="rest"><i class="fas fa-bed"></i> Long Rest</button>
     <button type="button" data-thm-sheet-tool="registration"><i class="fas fa-registered"></i> Registration</button>
@@ -2320,9 +2330,27 @@ function vehicleSheetToolsHtml(_actor) {
 }
 
 function findConditionImmunityInsertion(root) {
-  const labels = root.find("*").filter((_i, el) => /^Condition Immunities\b/i.test($(el).clone().children().remove().end().text().trim()));
+  const conditionLabel = game.i18n.localize("DND5E.ConImm");
+  const tidyTrait = root.find('[data-tidy-sheet-part="actor-trait"]').filter((_i, el) => {
+    const trait = $(el);
+    const icon = trait.find(".trait-icon").first();
+    const label = icon.attr("title") || icon.attr("aria-label") || "";
+    return label === conditionLabel || /^Condition Immunities\b/i.test(trait.text().trim());
+  }).first();
+  if (tidyTrait.length) return tidyTrait;
+
+  const regularTrait = root.find(".traits .form-group").filter((_i, el) => {
+    const label = $(el).children("label").first().text().trim();
+    return label === conditionLabel || /^Condition Immunities\b/i.test(label);
+  }).first();
+  if (regularTrait.length) return regularTrait;
+
+  const labels = root.find("*").filter((_i, el) => {
+    const label = $(el).clone().children().remove().end().text().trim();
+    return label === conditionLabel || /^Condition Immunities\b/i.test(label);
+  });
   for (const el of labels.toArray().reverse()) {
-    const preferred = $(el).closest(".form-group, .trait, .traits-list, .attribute, .card, li, section");
+    const preferred = $(el).closest('[data-tidy-sheet-part="actor-trait"], .trait-form-group, .form-group, .trait, .attribute, .card, li, section');
     if (preferred.length && !preferred.is(root)) return preferred.first();
     const fallback = $(el).closest("div");
     if (fallback.length && !fallback.is(root)) return fallback.first();
@@ -2337,12 +2365,19 @@ function bindVehicleSheetTools(panel, actor) {
     selectedShipId = actor.id;
     selectedShipName = actor.name;
     const tool = ev.currentTarget.dataset.thmSheetTool;
-    if (tool === "loadout") return ShipToolsPage.showLoadout(actor);
+    if (tool === "loadout") return ShipToolsPage.showLoadout(actor, { printOnly: true });
     if (tool === "cargo") return ShipToolsPage.showCargo(actor);
     if (tool === "rest") return ShipToolsPage.confirmLongRest(actor);
     if (tool === "registration") return ShipToolsPage.showRegistration(actor);
     if (tool === "fuel") return ShipToolsPage.showFuelRelease(actor);
   });
+}
+
+function shipScanDestinations() {
+  const journal = game.journal?.getName?.("TradeHubData");
+  const journalNames = Array.from(journal?.pages || []).map(page => page.name?.trim()).filter(Boolean);
+  if (journalNames.length) return [...new Set(journalNames)].sort((a, b) => a.localeCompare(b));
+  return Object.keys(getData().locations || {}).filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
 class ShipToolsPage {
@@ -2396,7 +2431,7 @@ class ShipToolsPage {
     }, { ...dialogOptions(), width: 620 }).render(true);
   }
 
-  static showLoadout(ship) {
+  static showLoadout(ship, { printOnly = false } = {}) {
     if (!ship) return ui.notifications.error("Selected ship not found.");
     const stats = cargoStats(ship);
     const cargoItems = getShipItems(ship).filter(item => ["loot", "consumable"].includes(item.type) && Number(item.system?.quantity || 0) > 0);
@@ -2420,6 +2455,7 @@ class ShipToolsPage {
       Fuel: Hydrogen x${Number(fuel?.system?.quantity || 0)} tonnes<br>
       ${stats.remaining >= 0 ? `<span class="thm-green">${Math.floor(stats.remaining).toLocaleString()} lbs of cargo space remaining.</span>` : `<span class="thm-red">WARNING: OVER WEIGHT<br>Hyperdrive Disabled</span>`}
     </div>`;
+    if (printOnly) return ChatMessage.create({ user: game.user.id, content });
     new Dialog({
       title: `${ship.name} Loadout`,
       content,
@@ -2609,6 +2645,10 @@ class CombatDamagePage {
     const repairModuleOptions = [`<option value="evenly" selected>Distribute Across Damaged Modules</option>`]
       .concat(modules.map(item => `<option value="${item.id}">AC ${itemAc(item)} - ${item.name}</option>`))
       .join("");
+    const scanDestinations = shipScanDestinations();
+    const scanDestinationOptions = scanDestinations.length
+      ? scanDestinations.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")
+      : `<option value="">No TradeHub destinations found</option>`;
     const shieldText = shieldsUp
       ? `${actor.name} is being attacked. Shields are up, so damage will hit shields first.`
       : `${actor.name} is being attacked. No shields are active, so damage will go to hull protection before vulnerable modules.`;
@@ -2618,6 +2658,7 @@ class CombatDamagePage {
         <button type="button" class="active" data-tab="attack">Attack Damage</button>
         <button type="button" data-tab="fuel">Fuel Scooping</button>
         <button type="button" data-tab="mining">Mining Damage</button>
+        <button type="button" data-tab="scans">Scans</button>
         <button type="button" data-tab="repair">Repair Ship</button>
       </nav>
       <p class="thm-damage-summary"><strong>Target:</strong> ${actor.name}<br><strong>Status:</strong> ${shieldsUp ? "Shields Up" : "Shields Down"}<br>${shieldText}</p>
@@ -2648,6 +2689,19 @@ class CombatDamagePage {
         <label>Damage:</label><input type="number" id="mining-damage-input" value="${rolls.damage ?? 0}" min="0">
         <label>Damage Module:</label><select id="mining-target-module">${miningModuleOptions}</select>
       </section>
+      <section class="thm-settings-section" data-tab-panel="scans">
+        <p class="notes">Scan the selected craft's combat profile, registered manifest, or detected jump wake.</p>
+        <label>Scan Type:</label>
+        <select id="scan-type">
+          <option value="tactical">Tactical Scan</option>
+          <option value="manifest">Manifest Scan</option>
+          <option value="wake">Wake Scanner</option>
+        </select>
+        <div class="thm-scan-destination" style="display:none;">
+          <label>Destination System:</label>
+          <select id="scan-destination">${scanDestinationOptions}</select>
+        </div>
+      </section>
       <section class="thm-settings-section" data-tab-panel="repair">
         <p class="notes">Make Pristine recalculates HP, AC, module value, jump data, and restores all module condition. Full Service Repair can bill TradeHub Capital. Ability Check Repair applies the entered repair HP without billing.</p>
         <label>Repair Action:</label>
@@ -2670,6 +2724,16 @@ class CombatDamagePage {
       buttons: {
         ok: { label: "OK", callback: html => {
           const tab = html.find(".thm-damage-tabs button.active").data("tab") || "attack";
+          if (tab === "scans") {
+            requestGm("performShipScan", {
+              actorId: actor.id,
+              sceneId: selectedToken?.scene?.id || canvas?.scene?.id || "",
+              tokenId: selectedToken?.document?.id || "",
+              scanType: html.find("#scan-type").val() || "tactical",
+              destination: html.find("#scan-destination").val() || ""
+            });
+            return;
+          }
           if (tab === "repair") {
             const action = html.find("#repair-action").val();
 	          requestGm("combatRepair", {
@@ -2710,6 +2774,11 @@ class CombatDamagePage {
 	        };
 	        html.find("#repair-action").on("change", syncRepairBillingRow);
 	        syncRepairBillingRow();
+          const syncScanDestination = () => {
+            html.find(".thm-scan-destination").toggle(html.find("#scan-type").val() === "wake");
+          };
+          html.find("#scan-type").on("change", syncScanDestination);
+          syncScanDestination();
           html.find("#fuel-scoop-add").on("click", () => {
             const quantity = Math.max(0, Number(html.find("#fuel-scoop-input").val() || 0));
             if (!quantity) return ui.notifications.warn("Enter the Hydrogen Fuel amount scooped.");
@@ -4802,6 +4871,86 @@ class Transactions {
     syncShipDirectory(data);
     await setSetting("data", data);
     broadcastRefresh();
+  }
+
+  static async performShipScan(payload, userId) {
+    const scene = payload.sceneId ? game.scenes.get(payload.sceneId) : null;
+    const tokenActor = payload.tokenId ? scene?.tokens?.get(payload.tokenId)?.actor : null;
+    const actor = tokenActor || game.actors.get(payload.actorId);
+    if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
+
+    const scanType = ["tactical", "manifest", "wake"].includes(payload.scanType) ? payload.scanType : "tactical";
+    const visibleItems = actor.items.filter(item => !/^secret compartment:/i.test(item.name || ""));
+    const modules = visibleItems.filter(item => ["equipment", "weapon"].includes(item.type));
+    const cargoItems = visibleItems.filter(item => ["loot", "consumable"].includes(item.type));
+    const namesFrom = collection => {
+      const entries = Array.isArray(collection) ? collection : Object.values(collection || {});
+      return entries.map(entry => typeof entry === "string" ? entry : entry?.name).filter(Boolean);
+    };
+    let content = "";
+
+    if (scanType === "tactical") {
+      const shieldHp = modules
+        .filter(item => /shield/i.test(item.name || ""))
+        .reduce((total, item) => total + Math.max(0, itemHp(item)), 0);
+      const weapons = modules.filter(item => item.type === "weapon");
+      const shortRanges = weapons.map(item => parseNumber(item.system?.range?.value || 0));
+      const longRanges = weapons.map(item => parseNumber(item.system?.range?.long || 0));
+      const minRange = shortRanges.length ? Math.min(...shortRanges) : 0;
+      const maxRange = longRanges.length ? Math.max(...longRanges) : 0;
+      const moduleList = modules.length
+        ? modules.map(item => itemHp(item) <= 0 ? `<b>Offline - ${escapeHtml(item.name)}</b>` : escapeHtml(item.name)).join("<br>")
+        : "None";
+      content = `<div class="thm-chat-card">
+        <b class="thm-green">Tactical Scan SUCCESS!</b><br>
+        <b>Target Loadout: ${escapeHtml(actor.name)}</b><br>
+        Current Health: ${Number(actor.system?.attributes?.hp?.value || 0)} HP<br>
+        Current Shields: ${shieldHp} HP<br>
+        Max Jump Distance: ${escapeHtml(hyperdriveRange(actor))}<br>
+        Min Weapon Range: ${minRange ? `${minRange.toLocaleString()} Meters` : "0"}<br>
+        Max Weapon Range: ${maxRange ? `${maxRange.toLocaleString()} Meters` : "0"}<br><br>
+        <b>Modules:</b><br>${moduleList}
+      </div>`;
+    } else if (scanType === "manifest") {
+      const crew = namesFrom(actor.system?.cargo?.crew);
+      const passengers = namesFrom(actor.system?.cargo?.passengers);
+      const illegalCargoDetected = cargoItems.some(item => /\billegal\b/i.test(item.name || ""));
+      const cargoList = cargoItems.length
+        ? cargoItems.map(item => {
+          const quantity = Math.max(0, Number(item.system?.quantity ?? 1));
+          const totalPrice = quantity * parseNumber(item.system?.price?.value ?? item.system?.price ?? 0);
+          const line = `${escapeHtml(item.name)} x${quantity} (worth ${formatGp(totalPrice)})`;
+          return /\billegal\b/i.test(item.name || "") ? `<span style="color:#8b0000;">${line}</span>` : line;
+        }).join("<br>")
+        : "None";
+      const totalCargoPrice = cargoItems.reduce((sum, item) => {
+        const quantity = Math.max(0, Number(item.system?.quantity ?? 1));
+        return sum + quantity * parseNumber(item.system?.price?.value ?? item.system?.price ?? 0);
+      }, 0);
+      content = `<div class="thm-chat-card">
+        <b class="thm-green">Manifest Scan SUCCESS!</b>
+        ${illegalCargoDetected ? `<br><b style="color:#8b0000;">WARNING: ILLEGAL CARGO</b>` : ""}
+        <br><b>${escapeHtml(actor.name)} Crew:</b><br>${crew.length ? crew.map(escapeHtml).join("<br>") : "None"}
+        <br><br><b>Passengers:</b><br>${passengers.length ? passengers.map(escapeHtml).join("<br>") : "None"}
+        <br><br><b>Cargo:</b><br>${cargoList}
+        <br><br><b>Total Cargo Worth:</b> ${formatGp(totalCargoPrice)}
+      </div>`;
+    } else {
+      const destinations = shipScanDestinations();
+      const destination = String(payload.destination || "").trim();
+      if (!destination || !destinations.includes(destination)) throw new Error("Select a valid Wake Scanner destination.");
+      content = `<div class="thm-chat-card">
+        <b class="thm-green">Wake Scan SUCCESS!</b><br>
+        <b>Target ${escapeHtml(actor.name)} jumped to the ${escapeHtml(destination)} system.</b>
+      </div>`;
+    }
+
+    await ChatMessage.create({
+      user: userId,
+      speaker: { alias: "TradeHub Ship Scanner" },
+      content
+    });
+    ui.notifications.info(`Performed ${scanType.replace(/^\w/, char => char.toUpperCase())} Scan on ${actor.name}.`);
   }
 
   static async combatRepair(payload, userId) {

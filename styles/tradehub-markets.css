@@ -838,6 +838,8 @@
 }
 
 .thm-sheet-shiptools {
+  width: 100%;
+  box-sizing: border-box;
   margin: 8px 0;
   padding: 8px;
   border: 1px solid rgba(0, 0, 0, 0.25);
