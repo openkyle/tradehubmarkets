@@ -2571,10 +2571,15 @@ class ShipToolsPage {
 
 class CombatDamagePage {
   static show() {
-    const selectedToken = canvas?.tokens?.controlled?.[0];
+    const targetedVehicle = Array.from(game.user?.targets || []).find(token => token?.actor?.type === "vehicle");
+    const controlledVehicle = canvas?.tokens?.controlled?.find(token => token?.actor?.type === "vehicle");
+    const selectedToken = targetedVehicle || controlledVehicle || canvas?.tokens?.controlled?.[0];
     if (selectedToken?.actor && selectedToken.actor.type !== "vehicle") return PoisonStatusPage.show(selectedToken.actor, selectedToken);
-    const actor = selectedToken?.actor || game.actors.get(selectedShipId);
-    if (!actor || actor.type !== "vehicle") return ui.notifications.error(`Select a ${setting("vehicleLabel").toLowerCase()} token or choose one in TradeHub first.`);
+    const actor = selectedToken?.actor;
+    if (!actor || actor.type !== "vehicle") return ui.notifications.error(`Target or select a ${setting("vehicleLabel").toLowerCase()} token first.`);
+    if (!damageableModules(actor).length) {
+      return ui.notifications.error(`${actor.name} has no equipped, HP-bearing ship modules. Damage was not applied.`);
+    }
     const rolls = lastAttackAndDamageRolls();
     const shield = findShipModule(actor, /shield generator|shield/i);
     const shieldsUp = itemHp(shield) > 0;
@@ -4631,7 +4636,9 @@ class Transactions {
   }
 
   static async applyCombatDamage(payload, userId) {
-    const actor = game.actors.get(payload.actorId);
+    const scene = payload.sceneId ? game.scenes.get(payload.sceneId) : null;
+    const tokenActor = payload.tokenId ? scene?.tokens?.get(payload.tokenId)?.actor : null;
+    const actor = tokenActor || game.actors.get(payload.actorId);
     if (!actor) throw new Error("Selected vehicle not found.");
     const sceneId = payload.sceneId || "";
     const tokenId = payload.tokenId || "";
@@ -4640,6 +4647,9 @@ class Transactions {
     const damageType = payload.damageType || "hull";
     const thermal = damageType === "thermal";
     const modules = damageableModules(actor);
+    if (!modules.length) {
+      throw new Error(`${actor.name} has no equipped, HP-bearing ship modules. Damage was not applied.`);
+    }
     const details = [];
     const destroyedDetails = [];
     const heatSinkPrompts = [];
