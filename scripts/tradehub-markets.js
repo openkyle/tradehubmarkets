@@ -42,7 +42,6 @@ const REST_CONSUMABLE_MESSAGES = [
 let selectedShipId = null;
 let selectedShipName = "";
 const openWindows = new Set();
-const pristineRefreshTimers = new Map();
 
 const clone = value => foundry.utils.deepClone(value);
 const duplicateDoc = doc => doc.toObject ? doc.toObject() : clone(doc);
@@ -67,7 +66,8 @@ function moduleApi() {
   game.tradehub.RepairShipPage = RepairShipPage;
   game.tradehub.ShipyardPage = ShipyardPage;
   game.tradehub.ShipToolsPage = ShipToolsPage;
-  game.tradehub.CombatDamagePage = CombatDamagePage;
+  game.tradehub.CombatDamagePage = CharacterStatusPage;
+  game.tradehub.CharacterStatusPage = CharacterStatusPage;
   game.tradehub.MeetNpcPage = MeetNpcPage;
   game.tradehub.MeetSystemPage = MeetSystemPage;
   game.tradehub.HeroesForHirePage = HeroesForHirePage;
@@ -258,26 +258,6 @@ async function createRestConsumableMessage(actor, item, restType) {
   });
 }
 
-Hooks.on("renderChatMessage", (message, html) => {
-  html.find("[data-thm-heat-sink], [data-thm-heat-sink-no]").on("click", ev => {
-    ev.preventDefault();
-    const button = ev.currentTarget;
-    const payload = {
-      actorId: button.dataset.actorId,
-      sceneId: button.dataset.sceneId || "",
-      tokenId: button.dataset.tokenId || "",
-      amount: Number(button.dataset.amount || 0),
-      reason: button.dataset.reason || "",
-      extra: button.dataset.extra || "",
-      attack: Number(button.dataset.attack || 0),
-      damageType: button.dataset.damageType || "thermal",
-      mode: button.dataset.mode || "carryover",
-      messageId: message.id
-    };
-    requestGm(button.dataset.thmHeatSinkNo !== undefined ? "declineHeatSink" : "deployHeatSink", payload);
-  });
-});
-
 Hooks.on("renderSceneControls", () => {
   if (game.user.isGM && setting("showGmBar")) GmBar.render();
 });
@@ -285,34 +265,6 @@ Hooks.on("renderSceneControls", () => {
 Hooks.on("renderActorSheet", injectVehicleSheetTools);
 Hooks.on("renderTidy5eActorSheet", injectVehicleSheetTools);
 Hooks.on("renderTidy5eSheet", injectVehicleSheetTools);
-
-Hooks.on("createItem", item => {
-  const actor = item?.parent;
-  if (!game.user.isGM || actor?.type !== "vehicle" || !["equipment", "weapon"].includes(item?.type)) return;
-  scheduleVehicleStatSync(actor, `${item.name} added`);
-});
-
-Hooks.on("deleteItem", item => {
-  const actor = item?.parent;
-  if (!game.user.isGM || actor?.type !== "vehicle" || !["equipment", "weapon"].includes(item?.type)) return;
-  scheduleVehicleStatSync(actor, `${item.name} removed`);
-});
-
-Hooks.on("updateItem", (item, changes) => {
-  const actor = item?.parent;
-  if (!game.user.isGM || actor?.type !== "vehicle" || !["equipment", "weapon"].includes(item?.type)) return;
-  const relevant = [
-    "name",
-    "system.equipped",
-    "system.hp.value",
-    "system.hp.max",
-    "system.armor.value",
-    "system.ac.value",
-    "system.price",
-    "system.price.value"
-  ].some(path => foundry.utils.hasProperty(changes, path));
-  if (relevant) scheduleVehicleStatSync(actor, `${item.name} updated`);
-});
 
 Hooks.on("updateToken", async (tokenDoc, changes) => {
   if (!game.user.isGM || !foundry.utils.hasProperty(changes, "x") && !foundry.utils.hasProperty(changes, "y")) return;
@@ -1200,12 +1152,6 @@ async function processGmRequest(message) {
     if (message.action === "payBounties") return Transactions.payBounties(message.payload, message.userId);
     if (message.action === "shipJettison") return Transactions.shipJettison(message.payload, message.userId);
     if (message.action === "shipFuelPurge") return Transactions.shipFuelPurge(message.payload, message.userId);
-    if (message.action === "shipFuelScoop") return Transactions.shipFuelScoop(message.payload, message.userId);
-    if (message.action === "applyCombatDamage") return Transactions.applyCombatDamage(message.payload, message.userId);
-    if (message.action === "performShipScan") return Transactions.performShipScan(message.payload, message.userId);
-    if (message.action === "deployHeatSink") return Transactions.deployHeatSink(message.payload, message.userId);
-    if (message.action === "declineHeatSink") return Transactions.declineHeatSink(message.payload, message.userId);
-    if (message.action === "combatRepair") return Transactions.combatRepair(message.payload, message.userId);
     if (message.action === "saveData") return saveData(message.payload.data);
   } catch (err) {
     console.error(err);
@@ -2380,13 +2326,6 @@ function bindVehicleSheetTools(panel, actor) {
   });
 }
 
-function shipScanDestinations() {
-  const journal = game.journal?.getName?.("TradeHubData");
-  const journalNames = Array.from(journal?.pages || []).map(page => page.name?.trim()).filter(Boolean);
-  if (journalNames.length) return [...new Set(journalNames)].sort((a, b) => a.localeCompare(b));
-  return Object.keys(getData().locations || {}).filter(Boolean).sort((a, b) => a.localeCompare(b));
-}
-
 class ShipToolsPage {
   static async show() {
     const ships = accessibleShips().map(ship => game.actors.get(ship.id) || ship).filter(Boolean);
@@ -2612,187 +2551,15 @@ class ShipToolsPage {
   }
 }
 
-class CombatDamagePage {
+class CharacterStatusPage {
   static show() {
-    const targetedVehicle = Array.from(game.user?.targets || []).find(token => token?.actor?.type === "vehicle");
-    const controlledVehicle = canvas?.tokens?.controlled?.find(token => token?.actor?.type === "vehicle");
-    const selectedToken = targetedVehicle || controlledVehicle || canvas?.tokens?.controlled?.[0];
-    if (selectedToken?.actor && selectedToken.actor.type !== "vehicle") return PoisonStatusPage.show(selectedToken.actor, selectedToken);
+    const selectedToken = Array.from(game.user?.targets || [])[0] || canvas?.tokens?.controlled?.[0];
     const actor = selectedToken?.actor;
-    if (!actor || actor.type !== "vehicle") return ui.notifications.error(`Target or select a ${setting("vehicleLabel").toLowerCase()} token first.`);
-    if (!damageableModules(actor).length) {
-      return ui.notifications.error(`${actor.name} has no equipped, HP-bearing ship modules. Damage was not applied.`);
+    if (!actor) return ui.notifications.error("Target or select a character token first.");
+    if (actor.type === "vehicle") {
+      return ui.notifications.warn("Vessel combat, scans, and combat repairs are handled by Full Speed Ahead.");
     }
-    const rolls = lastAttackAndDamageRolls();
-    const shield = findShipModule(actor, /shield generator|shield/i);
-    const shieldsUp = itemHp(shield) > 0;
-    const hull = firstHealthyHullReinforcement(actor);
-    const fuelScoop = findShipModule(actor, /fuel scoop/i);
-    const refinery = findShipModule(actor, /refinery/i);
-    const modules = damageableModules(actor).sort((a, b) => itemAc(a) - itemAc(b) || a.name.localeCompare(b.name));
-    const moduleOptions = [`<option value="evenly" ${!hull ? "selected" : ""}>Evenly Among Vulnerable Modules</option>`]
-      .concat(modules.map(item => `<option value="${item.id}" ${hull?.id === item.id ? "selected" : ""}>AC ${itemAc(item)} - ${item.name}</option>`))
-      .join("");
-    const attackModuleOptions = shieldsUp && shield
-      ? modules.map(item => {
-        const selected = item.id === shield.id ? "selected" : "";
-        const suffix = item.id === shield.id ? " (Shields absorb first)" : "";
-        return `<option value="${item.id}" ${selected}>AC ${itemAc(item)} - ${item.name}${suffix}</option>`;
-      }).join("") || moduleOptions
-      : moduleOptions;
-    const fuelModuleOptions = modules.map(item => `<option value="${item.id}" ${fuelScoop?.id === item.id ? "selected" : ""}>AC ${itemAc(item)} - ${item.name}</option>`).join("") || moduleOptions;
-    const miningDefault = refinery || (shieldsUp ? shield : null) || hull;
-    const miningModuleOptions = [`<option value="evenly" ${!miningDefault ? "selected" : ""}>Evenly Among Vulnerable Modules</option>`]
-      .concat(modules.map(item => {
-        const selected = miningDefault?.id === item.id ? "selected" : "";
-        const suffix = refinery?.id === item.id ? " (Refinery takes mining first)" : item.id === shield?.id && !refinery ? " (Shields absorb first)" : item.id === hull?.id && !refinery && !shieldsUp ? " (Hull protection first)" : "";
-        return `<option value="${item.id}" ${selected}>AC ${itemAc(item)} - ${item.name}${suffix}</option>`;
-      }))
-      .join("");
-    const repairModuleOptions = [`<option value="evenly" selected>Distribute Across Damaged Modules</option>`]
-      .concat(modules.map(item => `<option value="${item.id}">AC ${itemAc(item)} - ${item.name}</option>`))
-      .join("");
-    const scanDestinations = shipScanDestinations();
-    const scanDestinationOptions = scanDestinations.length
-      ? scanDestinations.map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")
-      : `<option value="">No TradeHub destinations found</option>`;
-    const shieldText = shieldsUp
-      ? `${actor.name} is being attacked. Shields are up, so damage will hit shields first.`
-      : `${actor.name} is being attacked. No shields are active, so damage will go to hull protection before vulnerable modules.`;
-    const repairPreview = fullServiceRepairPreview(actor);
-    const content = `<div class="thm-root thm-compact thm-damage-tool">
-      <nav class="thm-settings-tabs thm-damage-tabs">
-        <button type="button" class="active" data-tab="attack">Attack Damage</button>
-        <button type="button" data-tab="fuel">Fuel Scooping</button>
-        <button type="button" data-tab="mining">Mining Damage</button>
-        <button type="button" data-tab="scans">Scans</button>
-        <button type="button" data-tab="repair">Repair Ship</button>
-      </nav>
-      <p class="thm-damage-summary"><strong>Target:</strong> ${actor.name}<br><strong>Status:</strong> ${shieldsUp ? "Shields Up" : "Shields Down"}<br>${shieldText}</p>
-      <section class="thm-settings-section active" data-tab-panel="attack">
-        <p class="notes">Only modules which are lower than the AC of the attack will be hit in the attack.</p>
-        <label>Damage Type:</label>
-        <select id="damage-type"><option value="thermal" ${shieldsUp ? "selected" : ""}>Thermal / Shield</option><option value="hull" ${!shieldsUp ? "selected" : ""}>Hull</option></select>
-        <label>Attack:</label><input type="number" id="attack-input" value="${rolls.attack ?? ""}" placeholder="Attack total">
-        <label>Damage:</label><input type="number" id="damage-input" value="${rolls.damage ?? 0}" min="0">
-        <label>Channel Damage:</label><select id="target-module">${attackModuleOptions}</select>
-      </section>
-      <section class="thm-settings-section" data-tab-panel="fuel">
-        <p class="notes">Fuel scooping uses a fixed attack total of 25. Damage stays editable and defaults from the last damage roll.</p>
-        <label>Damage Type:</label><select id="fuel-damage-type"><option value="thermal">Thermal / Shield</option></select>
-        <label>Attack:</label><input type="number" id="fuel-attack-input" value="25">
-        <label>Damage:</label><input type="number" id="fuel-damage-input" value="${rolls.damage ?? 0}" min="0">
-        <label>Damage Module:</label><select id="fuel-target-module">${fuelModuleOptions}</select>
-        <div class="thm-fuel-scoop-grant">
-          <label>Hydrogen Fuel Scooped:</label>
-          <input type="number" id="fuel-scoop-input" value="${rolls.fuelYield ?? 0}" min="0">
-          <button type="button" id="fuel-scoop-add"><i class="fas fa-gas-pump"></i> Add Hydrogen Fuel</button>
-        </div>
-      </section>
-      <section class="thm-settings-section" data-tab-panel="mining">
-        <p class="notes">Refinery takes this damage first when installed.<br>Only modules which are lower than the AC of the attack will be hit in the attack.</p>
-        <label>Damage Type:</label><select id="mining-damage-type"><option value="hull" ${!shieldsUp ? "selected" : ""}>Hull</option><option value="thermal" ${shieldsUp ? "selected" : ""}>Thermal / Shield</option></select>
-        <label>Attack:</label><input type="number" id="mining-attack-input" value="${rolls.attack ?? ""}" placeholder="Attack total">
-        <label>Damage:</label><input type="number" id="mining-damage-input" value="${rolls.damage ?? 0}" min="0">
-        <label>Damage Module:</label><select id="mining-target-module">${miningModuleOptions}</select>
-      </section>
-      <section class="thm-settings-section" data-tab-panel="scans">
-        <p class="notes">Scan the selected craft's combat profile, registered manifest, or detected jump wake.</p>
-        <label>Scan Type:</label>
-        <select id="scan-type">
-          <option value="tactical">Tactical Scan</option>
-          <option value="manifest">Manifest Scan</option>
-          <option value="wake">Wake Scanner</option>
-        </select>
-        <div class="thm-scan-destination" style="display:none;">
-          <label>Destination System:</label>
-          <select id="scan-destination">${scanDestinationOptions}</select>
-        </div>
-      </section>
-      <section class="thm-settings-section" data-tab-panel="repair">
-        <p class="notes">Make Pristine recalculates HP, AC, module value, jump data, and restores all module condition. Full Service Repair can bill TradeHub Capital. Ability Check Repair applies the entered repair HP without billing.</p>
-        <label>Repair Action:</label>
-        <select id="repair-action">
-          <option value="heal" selected>Ability Check Repair</option>
-          <option value="full-service">Full Service Repair and Replace</option>
-          <option value="pristine">Make Pristine</option>
-        </select>
-        <div class="thm-repair-hp-row">
-          <label>Repair HP:</label><input type="number" id="repair-hp-input" value="${rolls.damage ?? ""}" min="0" placeholder="HP from card or repair roll">
-        </div>
-        <label class="thm-checkbox-row thm-repair-bill-row" style="display:none;"><span>Bill the TradeHub Capital</span><input class="thm-check" type="checkbox" id="repair-bill-capital" checked></label>
-        <label>Repair Module:</label><select id="repair-target-module">${repairModuleOptions}</select>
-        <p class="notes"><strong>Full Service Estimate:</strong> ${formatGp(repairPreview.total)}${repairPreview.insured ? `<br><strong>Glaxon Full Value:</strong> ${formatGp(repairPreview.rawTotal)}<br><strong>Glaxon Savings:</strong> ${formatGp(repairPreview.rawTotal - repairPreview.total)}` : ""}<br><strong>TradeHub Capital After:</strong> ${formatGp(bankBalance() - repairPreview.total)}</p>
-      </section>
-    </div>`;
-    new Dialog({
-      title: "Apply Damage",
-      content,
-      buttons: {
-        ok: { label: "OK", callback: html => {
-          const tab = html.find(".thm-damage-tabs button.active").data("tab") || "attack";
-          if (tab === "scans") {
-            requestGm("performShipScan", {
-              actorId: actor.id,
-              sceneId: selectedToken?.scene?.id || canvas?.scene?.id || "",
-              tokenId: selectedToken?.document?.id || "",
-              scanType: html.find("#scan-type").val() || "tactical",
-              destination: html.find("#scan-destination").val() || ""
-            });
-            return;
-          }
-          if (tab === "repair") {
-            const action = html.find("#repair-action").val();
-	          requestGm("combatRepair", {
-	            actorId: actor.id,
-	            action,
-	            hp: Math.max(0, Number(html.find("#repair-hp-input").val() || 0)),
-	            targetModule: html.find("#repair-target-module").val() || "evenly",
-	            billCapital: html.find("#repair-bill-capital").prop("checked") !== false
-	          });
-            return;
-          }
-          const prefix = tab === "attack" ? "" : `${tab}-`;
-          requestGm("applyCombatDamage", {
-            actorId: actor.id,
-            sceneId: selectedToken?.scene?.id || canvas?.scene?.id || "",
-            tokenId: selectedToken?.document?.id || "",
-            context: tab,
-            damageType: html.find(`#${prefix}damage-type`).val(),
-            attack: Number(html.find(`#${prefix}attack-input`).val() || 0),
-            damage: Math.max(0, Number(html.find(`#${prefix}damage-input`).val() || 0)),
-            targetModule: html.find(`#${prefix}target-module`).val() || "evenly"
-          });
-        } },
-        cancel: { label: "Cancel" }
-      },
-      render: html => {
-	        html.find(".thm-damage-tabs button").on("click", ev => {
-	          const tab = ev.currentTarget.dataset.tab;
-	          html.find(".thm-damage-tabs button").removeClass("active");
-	          $(ev.currentTarget).addClass("active");
-	          html.find(".thm-settings-section").removeClass("active");
-	          html.find(`.thm-settings-section[data-tab-panel="${tab}"]`).addClass("active");
-	        });
-	        const syncRepairBillingRow = () => {
-	          const isFullService = html.find("#repair-action").val() === "full-service";
-	          html.find(".thm-repair-hp-row").toggle(!isFullService);
-	          html.find(".thm-repair-bill-row").toggle(isFullService);
-	        };
-	        html.find("#repair-action").on("change", syncRepairBillingRow);
-	        syncRepairBillingRow();
-          const syncScanDestination = () => {
-            html.find(".thm-scan-destination").toggle(html.find("#scan-type").val() === "wake");
-          };
-          html.find("#scan-type").on("change", syncScanDestination);
-          syncScanDestination();
-          html.find("#fuel-scoop-add").on("click", () => {
-            const quantity = Math.max(0, Number(html.find("#fuel-scoop-input").val() || 0));
-            if (!quantity) return ui.notifications.warn("Enter the Hydrogen Fuel amount scooped.");
-            requestGm("shipFuelScoop", { shipId: actor.id, quantity });
-          });
-	      }
-    }, { ...dialogOptions(["combat-damage"]), width: 520 }).render(true);
+    return PoisonStatusPage.show(actor, selectedToken);
   }
 }
 
@@ -2800,7 +2567,7 @@ class PoisonStatusPage {
   static show(actor, token) {
     if (!game.user.isGM) return ui.notifications.error("Only the GM can assign TradeHub poison damage.");
     if (!actor || actor.type === "vehicle") return ui.notifications.error("Select a player or NPC token.");
-    const rolls = lastAttackAndDamageRolls();
+    const lastDamage = lastDamageRollTotal();
     const poison = actor.getFlag(MODULE_ID, "poisonedMovement") || {};
     const necrotic = actor.getFlag(MODULE_ID, "necroticHp") || {};
     const hp = actor.system?.attributes?.hp || {};
@@ -2818,7 +2585,7 @@ class PoisonStatusPage {
       <section class="thm-settings-section active" data-tab-panel="poison">
         <p class="notes">TradeHub poison deals damage when this token completes movement equal to its full speed. The damage defaults from the last damage card when found.</p>
         <label>Poison Movement Damage:</label>
-        <input type="number" id="thm-poison-damage" min="0" value="${Number(poison.damage ?? rolls.damage ?? 0)}">
+        <input type="number" id="thm-poison-damage" min="0" value="${Number(poison.damage ?? lastDamage)}">
         <div class="thm-actions">
           <button type="button" id="thm-apply-poison"><i class="fas fa-skull-crossbones"></i> Apply / Update Poison</button>
           <button type="button" id="thm-clear-poison"><i class="fas fa-times"></i> Clear Poison</button>
@@ -2837,7 +2604,7 @@ class PoisonStatusPage {
         <p class="notes">Necrotic damage reduces max HP. TradeHub stores the original max HP before the first reduction, then restores that stored value when cured.</p>
         <p><strong>Current HP:</strong> ${Number(hp.value ?? 0)} / ${Number(hp.max ?? 0)}<br><strong>Stored Baseline:</strong> ${necrotic.active ? `${necroticOriginal} HP` : "<span class='thm-muted'>None saved yet</span>"}<br><strong>Necrotic Current Max:</strong> ${necroticCurrent}</p>
         <label>Necrotic Max HP Reduction:</label>
-        <input type="number" id="thm-necrotic-damage" min="0" value="${Number(rolls.damage ?? 0)}">
+        <input type="number" id="thm-necrotic-damage" min="0" value="${lastDamage}">
         <div class="thm-actions">
           <button type="button" id="thm-apply-necrotic"><i class="fas fa-hand-holding-medical"></i> Apply Necrotic</button>
           <button type="button" id="thm-cure-necrotic"><i class="fas fa-heart"></i> Cure / Restore HP Max</button>
@@ -3120,7 +2887,7 @@ async function poisonTokenFlash(actor) {
   window.setTimeout(remove, 520);
 }
 
-function lastAttackAndDamageRolls() {
+function lastDamageRollTotal() {
   const messages = Array.from(game.messages?.contents || []).slice().reverse();
   const rollOf = message => {
     if (!message) return null;
@@ -3128,21 +2895,12 @@ function lastAttackAndDamageRolls() {
     return rolls[0] || null;
   };
   const messageText = message => message ? stripHtml(`${message.flavor || ""} ${message.content || ""}`) : "";
-  const attackMessage = messages.find(message => rollOf(message)?.formula?.includes("1d20") && !/constitution saving throw/i.test(messageText(message)));
-  const fuelYieldMessage = messages.find(message => {
-    const roll = rollOf(message);
-    return roll && !roll.formula?.includes("1d20") && /other formula/i.test(messageText(message));
-  });
   const damageMessage = messages.find(message => {
     const roll = rollOf(message);
     const text = messageText(message);
     return roll && !roll.formula?.includes("1d20") && !/other formula|constitution saving throw/i.test(text);
   });
-  return {
-    attack: rollOf(attackMessage)?.total ?? null,
-    damage: rollOf(damageMessage)?.total ?? 0,
-    fuelYield: rollOf(fuelYieldMessage)?.total ?? 0
-  };
+  return Number(rollOf(damageMessage)?.total ?? 0);
 }
 
 function isEquippedShipModule(item) {
@@ -3173,39 +2931,8 @@ function itemHp(item) {
   return Number(item?.system?.hp?.value || 0);
 }
 
-function itemAc(item) {
-  return Number(item?.system?.armor?.value ?? item?.system?.ac?.value ?? 0);
-}
-
 function findShipModule(actor, pattern) {
   return actor?.items?.find(item => isEquippedShipModule(item) && pattern.test(item.name || "") && itemMaxHp(item) > 0);
-}
-
-function firstHealthyHullReinforcement(actor) {
-  return damageableModules(actor).find(item => /hull reinforcements?/i.test(item.name || "") && itemHp(item) > 0);
-}
-
-function heatSinkItem(actor) {
-  return actor.items.find(item => /heat sink/i.test(item.name || "") && Number(item.system?.quantity ?? 1) > 0);
-}
-
-async function consumeHeatSink(actor) {
-  const heatSink = heatSinkItem(actor);
-  if (!heatSink) return false;
-  const quantity = Number(heatSink.system?.quantity ?? 1);
-  if (quantity > 1) await heatSink.update({ "system.quantity": quantity - 1 });
-  else await heatSink.delete();
-  return true;
-}
-
-async function updateModuleHp(item, hp) {
-  const value = Math.max(0, Number(hp || 0));
-  const update = { "system.hp.value": value };
-  if (value <= 0 && isEquippedShipModule(item)) {
-    update["system.equipped"] = false;
-    update[`flags.${MODULE_ID}.destroyedUnequipped`] = true;
-  }
-  await item.update(update);
 }
 
 async function restoreModuleHp(item, hp = itemMaxHp(item)) {
@@ -3251,12 +2978,6 @@ function shieldEffectColors(shield) {
   return { val1: 0x5099DD, val2: 0x90EEFF };
 }
 
-async function removeShieldTokenEffect(actor) {
-  await withActorTokensSelected(actor, async () => {
-    await TokenMagic.deleteFiltersOnSelected("superSpookyGlow");
-  });
-}
-
 async function activateShieldTokenEffect(actor) {
   const shield = findShipModule(actor, /shield generator|shield/i);
   if (!shield || itemHp(shield) <= 0) return;
@@ -3284,31 +3005,6 @@ async function activateShieldTokenEffect(actor) {
   });
 }
 
-async function applyDamageTokenEffect(actor) {
-  const params = [{
-    filterType: "splash",
-    filterId: "mySplash",
-    rank: 5,
-    color: 0x808080,
-    padding: 80,
-    time: Math.random() * 1000,
-    seed: Math.random(),
-    splashFactor: 1,
-    spread: 0.2,
-    blend: 1,
-    dimX: 1,
-    dimY: 1,
-    cut: false,
-    textureAlphaBlend: true,
-    anchorX: 0.32 + (Math.random() * 0.36),
-    anchorY: 0.32 + (Math.random() * 0.36)
-  }];
-  await withActorTokensSelected(actor, async () => {
-    if (TokenMagic.addFiltersOnSelected) await TokenMagic.addFiltersOnSelected(params);
-    else await TokenMagic.addUpdateFiltersOnSelected(params);
-  });
-}
-
 async function clearShipTokenEffects(actor) {
   const astrumFolder = "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/CharTokens/AstrumKnights/";
   const playersFolder = "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/CharTokens/Players/";
@@ -3332,352 +3028,10 @@ async function refreshShipTokenEffects(actor) {
   await activateShieldTokenEffect(actor);
 }
 
-function heatSinkChoiceCard({ actor, amount, reason, extra = "", attack = 0, damageType = "thermal", mode = "carryover", sceneId = "", tokenId = "" }) {
-  const attrs = `data-actor-id="${actor.id}" data-scene-id="${escapeHtml(sceneId)}" data-token-id="${escapeHtml(tokenId)}" data-amount="${Number(amount || 0)}" data-reason="${escapeHtml(reason)}" data-extra="${escapeHtml(extra)}" data-attack="${Number(attack || 0)}" data-damage-type="${escapeHtml(damageType)}" data-mode="${escapeHtml(mode)}"`;
-  const prompt = mode === "cargo"
-    ? `<b>${actor.name}</b> is about to lose cargo because <b>${escapeHtml(reason)}</b> failed.<br>Deploy a Heat Sink to protect the cargo hold?`
-    : `<b>${actor.name}</b> is incurring <b>${Number(amount || 0)} Thermal Damage</b> from <b>${escapeHtml(reason)}</b>.<br>Would you like to use a Heat Sink to tank the excess damage and protect the craft?`;
-  return `<div class="thm-heat-sink-card">${prompt}${extra}<div class="thm-heat-sink-actions"><button type="button" data-thm-heat-sink ${attrs}>Deploy Heat Sink</button><button type="button" data-thm-heat-sink-no ${attrs}>No</button></div></div>`;
-}
-
-async function markHeatSinkChoice(messageId, label) {
-  const original = game.messages.get(messageId);
-  if (!original?.isOwner) return;
-  const content = original.content
-    .replace(/<button[^>]*data-thm-heat-sink[^>]*>Deploy Heat Sink<\/button>/g, `<button type="button" disabled>${label}</button>`)
-    .replace(/<button[^>]*data-thm-heat-sink-no[^>]*>No<\/button>/g, `<button type="button" disabled>Resolved</button>`);
-  await original.update({ content });
-}
-
-function cargoDropSource(actor, context = {}) {
-  const scene = game.scenes?.get(context.sceneId) || canvas?.scene;
-  let tokenDoc = context.tokenId && scene ? scene.tokens?.get(context.tokenId) : null;
-  if (!tokenDoc && scene) {
-    tokenDoc = scene.tokens?.find?.(token => token.actorId === actor.id || token.actor?.id === actor.id) || null;
-  }
-  const canvasToken = actorSceneTokens(actor)[0];
-  if (!tokenDoc && canvasToken) tokenDoc = canvasToken.document;
-  return { scene: tokenDoc?.parent || scene || canvas?.scene, tokenDoc };
-}
-
-function cargoDropPosition(scene, tokenDoc, index, total) {
-  const gridSize = Number(scene?.grid?.size || canvas?.grid?.size || 100) || 100;
-  const gridDistance = Number(scene?.grid?.distance || canvas?.scene?.grid?.distance || 5) || 5;
-  const units = String(scene?.grid?.units || canvas?.scene?.grid?.units || "").toLowerCase();
-  const radiusDistance = /ft|feet|foot/i.test(units) ? 350 * 3.28084 : 350;
-  const radiusPx = Math.max(gridSize * 2, radiusDistance / gridDistance * gridSize);
-  const centerX = Number(tokenDoc?.x || 0) + Number(tokenDoc?.width || 1) * gridSize / 2;
-  const centerY = Number(tokenDoc?.y || 0) + Number(tokenDoc?.height || 1) * gridSize / 2;
-  const angle = Math.random() * Math.PI * 2 + index * 2.399963229728653;
-  const spread = total <= 1 ? 0.25 : (index + 1) / (total + 1);
-  const distance = radiusPx * Math.max(0.12, Math.min(1, spread + (Math.random() - 0.5) * 0.24));
-  const x = centerX + Math.cos(angle) * distance - gridSize / 2;
-  const y = centerY + Math.sin(angle) * distance - gridSize / 2;
-  const maxX = Math.max(0, Number(scene?.width || x) - gridSize);
-  const maxY = Math.max(0, Number(scene?.height || y) - gridSize);
-  return {
-    x: Math.max(0, Math.min(maxX, Math.round(x))),
-    y: Math.max(0, Math.min(maxY, Math.round(y)))
-  };
-}
-
-function cargoPileItemData(item, quantity) {
-  const data = foundry.utils.deepClone(item.toObject ? item.toObject() : item);
-  delete data._id;
-  foundry.utils.setProperty(data, "system.quantity", Math.max(1, Number(quantity || 1)));
-  return data;
-}
-
-async function createDroppedCargoPile(actor, item, quantity, context, index, total) {
-  const api = game.itempiles?.API;
-  if (!api?.createItemPile) {
-    console.warn(`${MODULE_ID} | Item Piles module API not available; cargo was removed but no pile was created.`);
-    return false;
-  }
-  const { scene, tokenDoc } = cargoDropSource(actor, context);
-  if (!scene || !tokenDoc) {
-    console.warn(`${MODULE_ID} | Could not locate a source token for dropped cargo from ${actor?.name || "vehicle"}.`);
-    return false;
-  }
-  const position = cargoDropPosition(scene, tokenDoc, index, total);
-  const itemData = cargoPileItemData(item, quantity);
-  const tokenOverrides = {
-    name: `${item.name} x${Math.max(1, Number(quantity || 1))}`,
-    texture: { src: item.img || "icons/svg/item-bag.svg" }
-  };
-  const attempts = [
-    { sceneId: scene.id, position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides },
-    { sceneId: scene.id, position, items: [itemData], tokenOverrides },
-    { scene, position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides },
-    { position, items: [{ item: itemData, quantity: Math.max(1, Number(quantity || 1)) }], tokenOverrides }
-  ];
-  for (const config of attempts) {
-    try {
-      await api.createItemPile(config);
-      return true;
-    } catch (err) {
-      console.debug(`${MODULE_ID} | Item Piles createItemPile attempt failed.`, err);
-    }
-  }
-  console.warn(`${MODULE_ID} | Failed to create dropped cargo item pile for ${item.name}.`);
-  return false;
-}
-
-async function jettisonCargoFromActor(actor, context = {}) {
-  const cargo = actor.items.filter(item => item.type === "loot");
-  if (!cargo.length) return [];
-  const count = Math.min(cargo.length, Math.floor(Math.random() * 4) + 1);
-  const removed = [];
-  const drops = [];
-  for (let i = 0; i < count; i++) {
-    const index = Math.floor(Math.random() * cargo.length);
-    const item = cargo.splice(index, 1)[0];
-    const quantity = Number(item.system?.quantity || 1);
-    const value = parseNumber(item.system?.price?.value ?? item.system?.price ?? 0) * quantity;
-    removed.push(`${item.name} x${quantity}${value ? ` (${formatGp(value)})` : ""}`);
-    drops.push({ item, quantity });
-  }
-  for (let i = 0; i < drops.length; i++) {
-    await createDroppedCargoPile(actor, drops[i].item, drops[i].quantity, context, i, drops.length);
-  }
-  for (const { item } of drops) {
-    await item.delete();
-  }
-  return removed;
-}
-
-async function applyQueuedCarryoverDamage(actor, { amount, attack, damageType = "thermal", source = "incoming damage", allowCargoPrompt = true, sceneId = "", tokenId = "" }) {
-  let remainingDamage = Math.max(0, Number(amount || 0));
-  const details = [];
-  const destroyedDetails = [];
-  const prompts = [];
-  const modules = damageableModules(actor);
-  let tokenDamageEffect = false;
-  let pool = modules.filter(module => itemHp(module) > 0 && itemAc(module) <= Number(attack || 0) && !/shield generator/i.test(module.name));
-  if (!pool.length) {
-    details.push(`<span class="thm-muted">No vulnerable modules were hit by AC ${attack || "N/A"}.</span>`);
-  } else {
-    const hpRemaining = new Map(pool.map(module => [module.id, itemHp(module)]));
-    const allocations = new Map();
-    while (remainingDamage > 0 && pool.length) {
-      const shuffled = shuffleArray(pool);
-      const base = Math.floor(remainingDamage / shuffled.length);
-      let remainder = remainingDamage % shuffled.length;
-      let overflow = 0;
-      for (const module of shuffled) {
-        const requested = base + (remainder > 0 ? 1 : 0);
-        if (remainder > 0) remainder -= 1;
-        if (requested <= 0) continue;
-        const available = Number(hpRemaining.get(module.id) || 0);
-        const dealt = Math.min(available, requested);
-        hpRemaining.set(module.id, available - dealt);
-        allocations.set(module.id, (allocations.get(module.id) || 0) + dealt);
-        overflow += requested - dealt;
-      }
-      remainingDamage = overflow;
-      pool = pool.filter(module => Number(hpRemaining.get(module.id) || 0) > 0);
-    }
-    for (const module of modules) {
-      const dealt = Number(allocations.get(module.id) || 0);
-      if (dealt <= 0) continue;
-      tokenDamageEffect = true;
-      const before = itemHp(module);
-      const after = Math.max(0, before - dealt);
-      await updateModuleHp(module, after);
-      const line = after <= 0 ? `<b>${module.name} hit for ${dealt} HP and is destroyed!</b>` : `${module.name} hit for ${dealt} HP`;
-      (after <= 0 ? destroyedDetails : details).push(line);
-      if (before > 0 && after <= 0 && /cargo bay/i.test(module.name || "")) {
-        if (allowCargoPrompt && heatSinkItem(actor)) {
-          prompts.push(heatSinkChoiceCard({ actor, amount: dealt, reason: module.name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.`, sceneId, tokenId }));
-        } else {
-          const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
-          if (removed.length) details.push(`<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.join("<br>")}</div>`);
-        }
-      }
-    }
-  }
-  const totalHp = await syncVehicleHpFromModules(actor);
-  if (tokenDamageEffect) await applyDamageTokenEffect(actor);
-  return {
-    details: details.concat(destroyedDetails.length ? ["", ...destroyedDetails] : []),
-    prompts,
-    totalHp
-  };
-}
-
 async function syncVehicleHpFromModules(actor) {
   const total = damageableModules(actor).reduce((sum, item) => sum + itemHp(item), 0);
   await actor.update({ "system.attributes.hp.value": total });
   return total;
-}
-
-function currentModuleHpTotal(actor) {
-  return damageableModules(actor).reduce((sum, item) => sum + Math.max(0, Math.min(itemHp(item), itemMaxHp(item))), 0);
-}
-
-function shipHyperdriveFormula(actor) {
-  const hyper = damageableModules(actor).find(item => /hyper\s?drive/i.test(item.name || ""));
-  if (!hyper) return "No HyperDrive module found";
-  return parseHyperdriveFormula(hyper) || hyperdriveFallbackFormula(hyper);
-}
-
-function shipStatSummary(actor) {
-  const modules = damageableModules(actor);
-  const nonShield = modules.filter(item => !isShieldModule(item));
-  const totalMaxHp = modules.reduce((sum, item) => sum + itemMaxHp(item), 0);
-  const shieldHp = modules.filter(isShieldModule).reduce((sum, item) => sum + itemMaxHp(item), 0);
-  const acModules = nonShield.filter(item => itemAc(item) > 0);
-  const averageAc = acModules.length ? Math.round(acModules.reduce((sum, item) => sum + itemAc(item), 0) / acModules.length) : 0;
-  const moduleValue = modules.reduce((sum, item) => sum + parseNumber(item.system?.price?.value ?? item.system?.price ?? 0), 0);
-  const shipCost = parseNumber(actor.system?.traits?.dimensions || 0);
-  return { modules, totalMaxHp, shieldHp, averageAc, moduleValue, shipCost, totalValue: shipCost + moduleValue, hyperdrive: shipHyperdriveFormula(actor) };
-}
-
-async function makeShipPristine(actor, { chat = true, reason = "Manual pristine refresh", userId = game.user.id } = {}) {
-  if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
-  const beforeHp = Number(actor.system?.attributes?.hp?.max || 0);
-  for (const item of repairableModules(actor)) {
-    await restoreModuleHp(item, itemMaxHp(item));
-  }
-  const summary = shipStatSummary(actor);
-  for (const item of summary.modules) {
-    await restoreModuleHp(item, itemMaxHp(item));
-  }
-  const publicBio = [
-    `HP Adjusted from ${beforeHp} HP to ${summary.totalMaxHp} HP`,
-    `Current Shields: ${summary.shieldHp} HP`,
-    `Max Jump Distance: ${summary.hyperdrive}`,
-    `Cargo Capacity: ${actor.system?.cargo?.capacity || 0} Tonnes`,
-    `Ship Cost: ${summary.totalValue.toLocaleString()} GP`,
-    `Average AC: ${summary.averageAc}`
-  ].join("<br>");
-  await actor.update({
-    "system.attributes.hp.max": summary.totalMaxHp,
-    "system.attributes.hp.value": summary.totalMaxHp,
-    "system.attributes.ac.value": summary.averageAc,
-    "system.details.source.custom": `Module Value: ${Math.floor(summary.moduleValue).toLocaleString()} GP`,
-    "system.details.biography.public": publicBio
-  });
-  await refreshShipTokenEffects(actor);
-  if (chat) {
-    await ChatMessage.create({
-      user: userId,
-      content: `<b>${actor.name} Made Pristine</b><br>${escapeHtml(reason)}<br>HP Adjusted from ${beforeHp} HP to ${summary.totalMaxHp} HP<br>Current Shields: ${summary.shieldHp} HP<br>Max Jump Distance: ${summary.hyperdrive}<br>Ship Value: ${formatGp(summary.totalValue)}<br>Average AC: ${summary.averageAc}`,
-      speaker: { alias: "TradeHub Ship Repair" }
-    });
-  }
-  return summary;
-}
-
-async function syncVehicleStatsFromModules(actor, { reason = "Loadout updated", notify = false } = {}) {
-  if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
-  const summary = shipStatSummary(actor);
-  const currentHp = currentModuleHpTotal(actor);
-  const publicBio = [
-    `HP Adjusted to ${summary.totalMaxHp} HP`,
-    `Current Shields: ${summary.shieldHp} HP`,
-    `Max Jump Distance: ${summary.hyperdrive}`,
-    `Cargo Capacity: ${actor.system?.cargo?.capacity || 0} Tonnes`,
-    `Ship Cost: ${summary.totalValue.toLocaleString()} GP`,
-    `Average AC: ${summary.averageAc}`
-  ].join("<br>");
-  await actor.update({
-    "system.attributes.hp.max": summary.totalMaxHp,
-    "system.attributes.hp.value": currentHp,
-    "system.attributes.ac.value": summary.averageAc,
-    "system.details.source.custom": `Module Value: ${Math.floor(summary.moduleValue).toLocaleString()} GP`,
-    "system.details.biography.public": publicBio
-  });
-  if (notify) ui.notifications.info(`${actor.name} stats synchronized: ${reason}.`);
-  return { ...summary, currentHp };
-}
-
-function scheduleVehicleStatSync(actor, reason) {
-  if (!actor?.id) return;
-  clearTimeout(pristineRefreshTimers.get(actor.id));
-  pristineRefreshTimers.set(actor.id, setTimeout(async () => {
-    pristineRefreshTimers.delete(actor.id);
-    try {
-      await syncVehicleStatsFromModules(actor, { reason, notify: false });
-      const data = getData();
-      syncShipDirectory(data);
-      await setSetting("data", data);
-      broadcastRefresh();
-    } catch (err) {
-      console.error(err);
-      ui.notifications.warn(`TradeHub could not refresh ${actor.name}: ${err.message}`);
-    }
-  }, 500));
-}
-
-function fullServiceRepairPreview(actor) {
-  const repairs = repairableModules(actor).map(item => {
-    const missing = Math.max(0, itemMaxHp(item) - itemHp(item));
-    const rawCost = missing * repairUnitCost(item);
-    return { item, missing, rawCost, cost: repairCostForItem(item, missing, actor) };
-  }).filter(entry => entry.missing > 0);
-  return {
-    repairs,
-    rawTotal: repairs.reduce((sum, entry) => sum + entry.rawCost, 0),
-    total: repairs.reduce((sum, entry) => sum + entry.cost, 0),
-    insured: isGlaxonInsured(actor)
-  };
-}
-
-async function fullServiceRepair(actor, { billCapital = true } = {}) {
-  const preview = fullServiceRepairPreview(actor);
-  if (!preview.repairs.length) return { ...preview, totalHp: currentModuleHpTotal(actor), rows: [] };
-  if (billCapital && bankBalance() < preview.total) throw new Error(`Not enough TradeHub capital for full service repair. Required: ${formatGp(preview.total)}; Available: ${formatGp(bankBalance())}.`);
-  if (billCapital) await updateBank(bankBalance() - preview.total);
-  for (const entry of preview.repairs) await restoreModuleHp(entry.item, itemMaxHp(entry.item));
-  const summary = await syncVehicleStatsFromModules(actor, { reason: "Full Service Repair and Replace", notify: false });
-  await refreshShipTokenEffects(actor);
-  const rows = preview.repairs
-    .sort((a, b) => b.cost - a.cost)
-    .map(entry => `${entry.item.name}: ${entry.missing} HP restored (${billCapital ? formatGp(entry.cost) : `${formatGp(entry.cost)} waived`}${preview.insured ? `, Glaxon value ${formatGp(entry.rawCost)}` : ""})`);
-  return { ...preview, billed: billCapital ? preview.total : 0, billCapital, totalHp: summary.currentHp, rows };
-}
-
-async function abilityRepair(actor, targetModule, hpToAdd) {
-  let remaining = Math.max(0, Number(hpToAdd || 0));
-  let added = 0;
-  const repaired = new Map();
-  const addRepairDetail = (item, hp) => {
-    if (!item || hp <= 0) return;
-    const current = repaired.get(item.id) || { name: item.name, hp: 0 };
-    current.hp += hp;
-    repaired.set(item.id, current);
-  };
-  if (remaining <= 0) return { added: 0, details: [] };
-  if (targetModule && targetModule !== "evenly") {
-    const item = actor.items.get(targetModule);
-    if (!item) return { added: 0, details: [] };
-    const add = Math.min(remaining, Math.max(0, itemMaxHp(item) - itemHp(item)));
-    if (add > 0) {
-      await restoreModuleHp(item, itemHp(item) + add);
-      addRepairDetail(item, add);
-      added += add;
-    }
-    return { added, details: [...repaired.values()].map(entry => `${entry.name}: ${entry.hp} HP repaired`) };
-  }
-  let pool = damageableModules(actor).filter(item => !isShieldModule(item) && itemHp(item) > 0 && itemHp(item) < itemMaxHp(item));
-  while (remaining > 0 && pool.length) {
-    for (const item of [...pool]) {
-      if (remaining <= 0) break;
-      const add = Math.min(1, itemMaxHp(item) - itemHp(item));
-      if (add > 0) {
-        await restoreModuleHp(item, itemHp(item) + add);
-        addRepairDetail(item, add);
-        remaining -= add;
-        added += add;
-      }
-    }
-    pool = pool.filter(item => itemHp(item) > 0 && itemHp(item) < itemMaxHp(item));
-  }
-  const details = [...repaired.values()]
-    .sort((a, b) => b.hp - a.hp || a.name.localeCompare(b.name))
-    .map(entry => `${entry.name}: ${entry.hp} HP repaired`);
-  return { added, details };
 }
 
 class TradeHubSettingsForm extends FormApplication {
@@ -4453,7 +3807,7 @@ class GmBar {
 	      <button title="Market"><i class="fas fa-list"></i></button>
 	      <button title="Heroes for Hire"><i class="fas fa-users"></i></button>
 	      <button title="Ship Tools"><i class="fas fa-rocket"></i></button>
-	      <button title="Combat Damage"><i class="fas fa-bomb"></i></button>
+	      <button title="Character Status"><i class="fas fa-skull-crossbones"></i></button>
 	      <button title="Fines"><i class="fas fa-ticket-alt"></i></button>
 	      <button title="Banking"><i class="fas fa-wallet"></i></button>
 	      <button title="Settings"><i class="fas fa-cog"></i></button>`;
@@ -4465,7 +3819,7 @@ class GmBar {
 	    market.addEventListener("click", () => SplashPage.showSplash());
 	    heroes.addEventListener("click", () => HeroesForHirePage.show());
 	    tools.addEventListener("click", () => ShipToolsPage.show());
-	    damage.addEventListener("click", () => CombatDamagePage.show());
+	    damage.addEventListener("click", () => CharacterStatusPage.show());
 	    fines.addEventListener("click", () => FinesPage.show());
 	    bank.addEventListener("click", () => BankingPage.show());
 	    config.addEventListener("click", () => ConfigPage.show());
@@ -4711,355 +4065,6 @@ class Transactions {
     broadcastRefresh();
   }
 
-  static async applyCombatDamage(payload, userId) {
-    const scene = payload.sceneId ? game.scenes.get(payload.sceneId) : null;
-    const tokenActor = payload.tokenId ? scene?.tokens?.get(payload.tokenId)?.actor : null;
-    const actor = tokenActor || game.actors.get(payload.actorId);
-    if (!actor) throw new Error("Selected vehicle not found.");
-    const sceneId = payload.sceneId || "";
-    const tokenId = payload.tokenId || "";
-    const attack = Number(payload.attack || 0);
-    const damage = Math.max(0, Number(payload.damage || 0));
-    const damageType = payload.damageType || "hull";
-    const thermal = damageType === "thermal";
-    const modules = damageableModules(actor);
-    if (!modules.length) {
-      throw new Error(`${actor.name} has no equipped, HP-bearing ship modules. Damage was not applied.`);
-    }
-    const details = [];
-    const destroyedDetails = [];
-    const heatSinkPrompts = [];
-    let tokenDamageEffect = false;
-
-    const offerHeatSink = async (amount, reason, extra = "") => {
-      if (amount <= 0) return false;
-      if (!(thermal || /shield generator|hull reinforcements?|cargo bay|fuel scoop|stealth camouflage/i.test(reason))) return false;
-      if (!heatSinkItem(actor)) {
-        heatSinkPrompts.push(`<b style="color:red;">WARNING: NO HEAT SINK</b><br><b>${amount} Thermal Damage cannot be collected.</b>`);
-        return false;
-      }
-      heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount, reason, extra, attack, damageType, mode: "carryover", sceneId, tokenId }));
-      return true;
-    };
-
-    const applyToModule = async (module, amount) => {
-      if (!module || amount <= 0 || itemHp(module) <= 0) return amount;
-      const before = itemHp(module);
-      const dealt = Math.min(before, amount);
-      const after = before - dealt;
-      await updateModuleHp(module, after);
-      const line = after <= 0 ? `<b>${module.name} hit for ${dealt} HP and is destroyed!</b>` : `${module.name} hit for ${dealt} HP`;
-      (after <= 0 ? destroyedDetails : details).push(line);
-      if (/shield generator/i.test(module.name || "")) {
-        if (before > 0 && after <= 0) await removeShieldTokenEffect(actor);
-      } else {
-        tokenDamageEffect = true;
-      }
-      return amount - dealt;
-    };
-
-    const jettisonCargo = async () => {
-      const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
-      return removed.length ? `<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.join("<br>")}</div>` : "";
-    };
-
-    const applyCarryover = async (amount, source = "") => {
-      if (amount <= 0) return;
-      if (await offerHeatSink(amount, source)) return;
-      let remainingDamage = amount;
-      let pool = modules.filter(module => itemHp(module) > 0 && itemAc(module) <= attack && !/shield generator/i.test(module.name));
-      if (!pool.length) {
-        details.push(`<span class="thm-muted">No vulnerable modules were hit by AC ${attack || "N/A"}.</span>`);
-        return;
-      }
-      const hpRemaining = new Map(pool.map(module => [module.id, itemHp(module)]));
-      const allocations = new Map();
-      while (remainingDamage > 0 && pool.length) {
-        const shuffled = shuffleArray(pool);
-        const base = Math.floor(remainingDamage / shuffled.length);
-        let remainder = remainingDamage % shuffled.length;
-        let overflow = 0;
-        for (const module of shuffled) {
-          const requested = base + (remainder > 0 ? 1 : 0);
-          if (remainder > 0) remainder -= 1;
-          if (requested <= 0) continue;
-          const available = Number(hpRemaining.get(module.id) || 0);
-          const dealt = Math.min(available, requested);
-          hpRemaining.set(module.id, available - dealt);
-          allocations.set(module.id, (allocations.get(module.id) || 0) + dealt);
-          overflow += requested - dealt;
-        }
-        remainingDamage = overflow;
-        pool = pool.filter(module => Number(hpRemaining.get(module.id) || 0) > 0);
-      }
-      for (const module of modules) {
-        const dealt = Number(allocations.get(module.id) || 0);
-        if (dealt <= 0) continue;
-        tokenDamageEffect = true;
-        const before = itemHp(module);
-        const after = Math.max(0, before - dealt);
-        await updateModuleHp(module, after);
-        const line = after <= 0 ? `<b>${module.name} hit for ${dealt} HP and is destroyed!</b>` : `${module.name} hit for ${dealt} HP`;
-        (after <= 0 ? destroyedDetails : details).push(line);
-        const destroyed = before > 0 && after <= 0;
-        if (destroyed) {
-          const name = module.name || "";
-          if (/cargo bay/i.test(name)) {
-            if (heatSinkItem(actor)) {
-              heatSinkPrompts.push(heatSinkChoiceCard({ actor, amount: Math.max(remainingDamage, dealt), reason: name, attack, damageType, mode: "cargo", extra: `<br>Status: Cargo hold failure imminent.`, sceneId, tokenId }));
-            } else {
-              const msg = await jettisonCargo();
-              if (msg) details.push(msg);
-            }
-          } else if (/fuel scoop|stealth camouflage|hull reinforcements?/i.test(name)) {
-            if (remainingDamage > 0 && await offerHeatSink(remainingDamage, name)) return;
-          }
-        }
-      }
-    };
-
-    let remaining = damage;
-    if (payload.context === "fuel") {
-      const fuelScoop = actor.items.get(payload.targetModule) || findShipModule(actor, /fuel scoop/i);
-      if (!fuelScoop) throw new Error("No Fuel Scoop module found for fuel scooping damage.");
-      const carry = await applyToModule(fuelScoop, remaining);
-      if (carry > 0) await applyCarryover(carry, fuelScoop.name);
-    } else if (payload.context === "mining") {
-      const shield = findShipModule(actor, /shield generator|shield/i);
-      const hull = firstHealthyHullReinforcement(actor);
-      const selected = payload.targetModule && payload.targetModule !== "evenly" ? actor.items.get(payload.targetModule) : null;
-      const target = selected || findShipModule(actor, /refinery/i) || (itemHp(shield) > 0 ? shield : null) || hull;
-      if (target) {
-        const carry = await applyToModule(target, remaining);
-        if (carry > 0) await applyCarryover(carry, target.name);
-      } else {
-        await applyCarryover(remaining, "asteroid debris impact");
-      }
-    } else {
-      const shield = findShipModule(actor, /shield generator|shield/i);
-      if (itemHp(shield) > 0) {
-        const before = itemHp(shield);
-        const dealt = Math.min(before, remaining);
-        await updateModuleHp(shield, before - dealt);
-        details.push(`${shield.name} hit for ${dealt} HP`);
-        remaining -= dealt;
-        if (itemHp(shield) <= 0) {
-          details.push(`<b>${shield.name} is depleted! Shields are down!</b>`);
-          await removeShieldTokenEffect(actor);
-        }
-        if (remaining > 0) await applyCarryover(remaining, shield.name);
-      } else {
-        const selected = payload.targetModule && payload.targetModule !== "evenly" ? actor.items.get(payload.targetModule) : null;
-        const hull = firstHealthyHullReinforcement(actor);
-        if (selected) {
-          const carry = await applyToModule(selected, remaining);
-          if (carry > 0) await applyCarryover(carry, selected.name);
-        } else if (hull) {
-          const carry = await applyToModule(hull, remaining);
-          if (carry > 0) await applyCarryover(carry, hull.name);
-        } else {
-          await applyCarryover(remaining, "incoming damage");
-        }
-      }
-    }
-
-    const totalHp = await syncVehicleHpFromModules(actor);
-    if (tokenDamageEffect) await applyDamageTokenEffect(actor);
-    if (totalHp <= 0) destroyedDetails.push(`<b style="color:red;">${actor.name} explodes into a ball of fiery force!</b>`);
-    const label = thermal ? "Thermal" : "Hull";
-    const damageLines = details
-      .concat(destroyedDetails.length ? ["", ...destroyedDetails] : [])
-      .join("<br>");
-    await ChatMessage.create({
-      content: `<b style="color:red;">${actor.name} suffers ${damage} ${label} Damage!</b><br><b>Attack was AC: ${attack || "N/A"}</b><br>${damageLines}${heatSinkPrompts.length ? `<br><br>${heatSinkPrompts.join("<br>")}` : ""}`,
-      speaker: { alias: "TradeHub Combat Damage" }
-    });
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
-  static async performShipScan(payload, userId) {
-    const scene = payload.sceneId ? game.scenes.get(payload.sceneId) : null;
-    const tokenActor = payload.tokenId ? scene?.tokens?.get(payload.tokenId)?.actor : null;
-    const actor = tokenActor || game.actors.get(payload.actorId);
-    if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
-
-    const scanType = ["tactical", "manifest", "wake"].includes(payload.scanType) ? payload.scanType : "tactical";
-    const visibleItems = actor.items.filter(item => !/^secret compartment:/i.test(item.name || ""));
-    const modules = visibleItems.filter(item => ["equipment", "weapon"].includes(item.type));
-    const cargoItems = visibleItems.filter(item => ["loot", "consumable"].includes(item.type));
-    const namesFrom = collection => {
-      const entries = Array.isArray(collection) ? collection : Object.values(collection || {});
-      return entries.map(entry => typeof entry === "string" ? entry : entry?.name).filter(Boolean);
-    };
-    let content = "";
-
-    if (scanType === "tactical") {
-      const shieldHp = modules
-        .filter(item => /shield/i.test(item.name || ""))
-        .reduce((total, item) => total + Math.max(0, itemHp(item)), 0);
-      const weapons = modules.filter(item => item.type === "weapon");
-      const shortRanges = weapons.map(item => parseNumber(item.system?.range?.value || 0));
-      const longRanges = weapons.map(item => parseNumber(item.system?.range?.long || 0));
-      const minRange = shortRanges.length ? Math.min(...shortRanges) : 0;
-      const maxRange = longRanges.length ? Math.max(...longRanges) : 0;
-      const moduleList = modules.length
-        ? modules.map(item => {
-          const maxHp = Math.max(0, itemMaxHp(item));
-          const currentHp = Math.max(0, itemHp(item));
-          const condition = maxHp > 0 ? Math.max(0, Math.min(100, Math.round(currentHp / maxHp * 100))) : 0;
-          const line = `${condition}% - ${escapeHtml(item.name)}`;
-          return currentHp <= 0 ? `<b>${line} (Offline)</b>` : line;
-        }).join("<br>")
-        : "None";
-      content = `<div class="thm-chat-card">
-        <b class="thm-green">Tactical Scan SUCCESS!</b><br>
-        <b>Target Loadout: ${escapeHtml(actor.name)}</b><br>
-        Current Health: ${Number(actor.system?.attributes?.hp?.value || 0)} HP<br>
-        Current Shields: ${shieldHp} HP<br>
-        Max Jump Distance: ${escapeHtml(hyperdriveRange(actor))}<br>
-        Min Weapon Range: ${minRange ? `${minRange.toLocaleString()} Meters` : "0"}<br>
-        Max Weapon Range: ${maxRange ? `${maxRange.toLocaleString()} Meters` : "0"}<br><br>
-        <b>Modules:</b><br>${moduleList}
-      </div>`;
-    } else if (scanType === "manifest") {
-      const crew = namesFrom(actor.system?.cargo?.crew);
-      const passengers = namesFrom(actor.system?.cargo?.passengers);
-      const illegalCargoDetected = cargoItems.some(item => /\billegal\b/i.test(item.name || ""));
-      const cargoList = cargoItems.length
-        ? cargoItems.map(item => {
-          const quantity = Math.max(0, Number(item.system?.quantity ?? 1));
-          const totalPrice = quantity * parseNumber(item.system?.price?.value ?? item.system?.price ?? 0);
-          const line = `${escapeHtml(item.name)} x${quantity} (worth ${formatGp(totalPrice)})`;
-          return /\billegal\b/i.test(item.name || "") ? `<span style="color:#8b0000;">${line}</span>` : line;
-        }).join("<br>")
-        : "None";
-      const totalCargoPrice = cargoItems.reduce((sum, item) => {
-        const quantity = Math.max(0, Number(item.system?.quantity ?? 1));
-        return sum + quantity * parseNumber(item.system?.price?.value ?? item.system?.price ?? 0);
-      }, 0);
-      content = `<div class="thm-chat-card">
-        <b class="thm-green">Manifest Scan SUCCESS!</b>
-        ${illegalCargoDetected ? `<br><b style="color:#8b0000;">WARNING: ILLEGAL CARGO</b>` : ""}
-        <br><b>${escapeHtml(actor.name)} Crew:</b><br>${crew.length ? crew.map(escapeHtml).join("<br>") : "None"}
-        <br><br><b>Passengers:</b><br>${passengers.length ? passengers.map(escapeHtml).join("<br>") : "None"}
-        <br><br><b>Cargo:</b><br>${cargoList}
-        <br><br><b>Total Cargo Worth:</b> ${formatGp(totalCargoPrice)}
-      </div>`;
-    } else {
-      const destinations = shipScanDestinations();
-      const destination = String(payload.destination || "").trim();
-      if (!destination || !destinations.includes(destination)) throw new Error("Select a valid Wake Scanner destination.");
-      content = `<div class="thm-chat-card">
-        <b class="thm-green">Wake Scan SUCCESS!</b><br>
-        <b>Target ${escapeHtml(actor.name)} jumped to the ${escapeHtml(destination)} system.</b>
-      </div>`;
-    }
-
-    await ChatMessage.create({
-      user: userId,
-      speaker: { alias: "TradeHub Ship Scanner" },
-      content
-    });
-    ui.notifications.info(`Performed ${scanType.replace(/^\w/, char => char.toUpperCase())} Scan on ${actor.name}.`);
-  }
-
-  static async combatRepair(payload, userId) {
-    const actor = game.actors.get(payload.actorId);
-    if (!actor || actor.type !== "vehicle") throw new Error("Selected vehicle not found.");
-    const action = payload.action || "heal";
-	    if (action === "pristine") {
-	      await makeShipPristine(actor, { chat: true, reason: "Manual GM repair tab refresh", userId });
-	    } else if (["service", "full-service", "fullService"].includes(action)) {
-	      const result = await fullServiceRepair(actor, { billCapital: payload.billCapital !== false });
-	      if (!result.repairs.length) throw new Error(`${actor.name} has no damaged modules to repair.`);
-	      const insuranceLine = result.insured
-	        ? `<br><b>Glaxon Insurance:</b> Active, 50% repair discount applied. Savings: ${formatGp(result.rawTotal - result.total)}`
-	        : `<br><b>With Glaxon Insurance you would have paid:</b> ${formatGp(Math.floor(result.rawTotal * 0.5))}<br><i>Ask us how today!</i>`;
-	      await ChatMessage.create({
-	        user: userId,
-	        content: `<b>Full Service Repair and Replace: ${actor.name}</b><br>${result.rows.join("<br>")}<br><br><b>Full Repair Value:</b> ${formatGp(result.rawTotal)}<br><b>Total Repair Cost:</b> ${formatGp(result.total)}<br><b>TradeHub Capital Billed:</b> ${result.billCapital ? formatGp(result.billed) : "No, repair waived"}<br><b>${setting("vehicleLabel")} HP:</b> ${result.totalHp}<br><b>TradeHub Capital:</b> ${formatGp(bankBalance())}<br><br><b>Repair Rate:</b> ${formatGp(setting("repairCostPerHp"))} / HP, ${formatGp(setting("repairCostPerShieldPoint"))} / Shield HP${insuranceLine}`,
-	        speaker: { alias: "TradeHub Ship Repair" }
-	      });
-    } else {
-      const result = await abilityRepair(actor, payload.targetModule, payload.hp);
-      if (result.added <= 0) {
-        await ChatMessage.create({
-          user: userId,
-          content: `<b style="color:green;">ERROR: HP FULL</b><br><b>${actor.name} has no repairable module damage for that selection.</b>`,
-          speaker: { alias: "TradeHub Ship Repair" }
-        });
-      } else {
-        const totalHp = await syncVehicleHpFromModules(actor);
-        await refreshShipTokenEffects(actor);
-        await ChatMessage.create({
-          user: userId,
-          content: `<b style="color:green;">SUCCESS: MODULES REPAIRED!</b><br><b>${actor.name}</b><br><b>Modules Repaired:</b><br>${result.details.join("<br>")}<br><b>Total HP Restored:</b> ${result.added}<br><b>${setting("vehicleLabel")} HP:</b> ${totalHp}`,
-          speaker: { alias: "TradeHub Ship Repair" }
-        });
-      }
-    }
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
-  static async deployHeatSink(payload, userId) {
-    const actor = game.actors.get(payload.actorId);
-    if (!actor) throw new Error("Selected vehicle not found.");
-    const amount = Math.max(0, Number(payload.amount || 0));
-    const reason = payload.reason || "thermal carryover";
-    const extra = payload.extra || "";
-    const used = await consumeHeatSink(actor);
-    if (!used) throw new Error("No Heat Sink is available to deploy.");
-    const cargoMode = payload.mode === "cargo";
-    await ChatMessage.create({
-      content: cargoMode
-        ? `<b style="color:green;">Heat Sink Ejected!</b><br><b style="color:green;">Cargo Secured</b>${extra}<br><span class="thm-muted">${actor.name}: ${escapeHtml(reason)}</span>`
-        : `<b style="color:green;">Heat Sink Ejected!</b><br><b style="color:green;">${amount} Thermal Damage Avoided</b>${extra}<br><span class="thm-muted">${actor.name}: ${escapeHtml(reason)}</span>`,
-      speaker: { alias: "TradeHub Combat Damage" }
-    });
-    await markHeatSinkChoice(payload.messageId, "Heat Sink Deployed");
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
-  static async declineHeatSink(payload, userId) {
-    const actor = game.actors.get(payload.actorId);
-    if (!actor) throw new Error("Selected vehicle not found.");
-    const mode = payload.mode || "carryover";
-    const reason = payload.reason || "thermal carryover";
-    const amount = Math.max(0, Number(payload.amount || 0));
-    const attack = Number(payload.attack || 0);
-    const damageType = payload.damageType || "thermal";
-    const sceneId = payload.sceneId || "";
-    const tokenId = payload.tokenId || "";
-    await markHeatSinkChoice(payload.messageId, "Heat Sink Spared");
-    if (mode === "cargo") {
-      const removed = await jettisonCargoFromActor(actor, { sceneId, tokenId });
-      await ChatMessage.create({
-        content: `<div class="thm-heat-sink-card thm-heat-sink-danger"><b style="color:red;">Cargo Jettisoned!</b><br>${removed.length ? removed.join("<br>") : "No cargo was available to jettison."}<br><span class="thm-muted">${actor.name}: ${escapeHtml(reason)}</span></div>`,
-        speaker: { alias: "TradeHub Combat Damage" }
-      });
-    } else {
-      const result = await applyQueuedCarryoverDamage(actor, { amount, attack, damageType, source: reason, allowCargoPrompt: true, sceneId, tokenId });
-      const label = damageType === "thermal" ? "Thermal" : "Hull";
-      await ChatMessage.create({
-        content: `<b style="color:red;">Heat Sink Spared: ${actor.name} takes ${amount} ${label} carryover.</b><br><b>Attack was AC: ${attack || "N/A"}</b><br>${result.details.join("<br>")}${result.prompts?.length ? `<br><br>${result.prompts.join("<br>")}` : ""}`,
-        speaker: { alias: "TradeHub Combat Damage" }
-      });
-    }
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
   static async shipyardBuy(payload, userId) {
     const source = await fromUuid(payload.sourceUuid);
     const selected = game.actors.get(payload.ownedShipId);
@@ -5245,33 +4250,6 @@ class Transactions {
     broadcastRefresh();
   }
 
-  static async shipFuelScoop({ shipId, quantity }, userId) {
-    const ship = game.actors.get(shipId);
-    if (!ship) throw new Error("Selected ship not found.");
-    const amount = Math.floor(Math.max(0, Number(quantity || 0)));
-    if (!amount) throw new Error("Enter the Hydrogen Fuel amount scooped.");
-    const hydrogen = (await getTradeGoods()).find(item => item.name.toLowerCase() === "hydrogen fuel");
-    if (!hydrogen) throw new Error("Hydrogen Fuel was not found in the configured Trade Goods compendium and folder.");
-    const addedWeight = amount * Number(hydrogen.weight || 0);
-    const stats = cargoStats(ship);
-    if (stats.current + addedWeight > stats.max) throw new Error("Insufficient cargo capacity for the scooped Hydrogen Fuel.");
-    const existing = ship.items.find(item => item.name.toLowerCase() === "hydrogen fuel" && ["loot", "consumable"].includes(item.type));
-    if (existing) await existing.update({ "system.quantity": Number(existing.system?.quantity || 0) + amount });
-    else {
-      const source = await fromUuid(hydrogen.uuid);
-      const itemData = duplicateDoc(source);
-      foundry.utils.setProperty(itemData, "system.quantity", amount);
-      await ship.createEmbeddedDocuments("Item", [itemData]);
-    }
-    await ChatMessage.create({
-      user: userId,
-      content: `<strong>Fuel Scooping Complete</strong><br><strong>${ship.name}</strong> gained Hydrogen Fuel x${amount}.`
-    });
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
 }
 
 async function transferShipItems(oldShip, newShip, sellModules) {

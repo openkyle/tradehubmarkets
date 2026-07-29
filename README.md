@@ -54,7 +54,7 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - Starport Services can play a configurable local load sound from the Visuals settings tab.
 - Predictive shortage price increases are capped by the **Max Shortage %** setting, default 57%; the GM may set any higher value intentionally.
 - TradeHub Settings are organized into tabs for Compendiums, Visuals, Capital, and Market Math.
-- TradeHub Settings include a Help tab with concise setup and workflow tips for compendiums, markets, vehicles, capital, repairs, combat, news, and GM controls.
+- TradeHub Settings include a Help tab with concise setup and workflow tips for compendiums, markets, vehicles, capital, Starport repairs, character statuses, news, and GM controls.
 - TradeHub Settings now open as a larger configuration window with scrollable tab content.
 - Shipyard purchase options are ordered by parsed purchase price and shipyard action buttons align across the lower panels.
 - Quantity fields use typed values plus Clear/Max controls, without extra arrow stepper buttons.
@@ -63,20 +63,8 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - Starport preloads its splash image with a small loading bar and reserves image space to prevent first-open layout collapse.
 - TradeHub Settings are available from Foundry Configure Settings and the GM gear button, using one stable settings form with locked compendium dropdowns and optional folder dropdowns.
 - Ship Tools are integrated behind a rocket button and bundled as a player macro.
-- Combat Damage is integrated behind an explosion button and bundled as a macro, with shield-first damage, hull protection, module AC filtering, fuel scooping, mining damage, and heat-sink thermal carryover handling.
-- Combat Damage now displays the Shield Generator as the selected channel while shields are up, matching the shield-first damage rule shown in the transaction result.
-- Evenly distributed combat damage now plans a fair split across all AC-eligible modules and reports one aggregated chat line per module hit.
-- Heat sinks now prompt players in chat before being consumed; pressing Deploy Heat Sink spends one heat sink and posts the avoided thermal damage.
-- Heat sink prompts include a No option; declining keeps the heat sink and resolves the queued overage damage or cargo loss.
-- Cargo hold failure uses the same heat-sink choice card style, allowing a heat sink to protect cargo before jettison occurs.
-- Combat damage chat cards now list all damage results first and move unresolved heat-sink/cargo choices to the bottom.
-- Fuel Scooping damage defaults to and directly damages the Fuel Scoop module, bypassing shields and hull protection.
-- Mining Damage defaults to and directly damages the Refinery module before any carryover.
-- Mining Damage now falls back to shields, then hull protection, then vulnerable modules when no Refinery is installed.
-- Combat Damage includes a Repair Ship tab for Ability Check Repair, paid Full Service Repair, and Make Pristine recalculation.
-- Full Service Repair and Replace uses the configured normal HP and shield HP repair costs, bills TradeHub Capital, resyncs derived vehicle stats, and reports the rates in chat.
-- Vehicle actors automatically synchronize HP, max HP, AC, module value, jump data, and biography when equipment or weapon modules are added, removed, or edited. This preserves existing damage; use Make Pristine when the craft should be fully restored.
-- Only equipped vehicle equipment and weapon modules contribute HP, max HP, AC, shields, jump data, pristine totals, repairs, and combat damage targeting.
+- Character Status is integrated behind the skull button and bundled as a macro, with Poison, Foundry Status, and Necrotic tabs for selected character tokens.
+- Vessel combat, scans, mining/fuel-scooping damage, combat repair, Make Pristine, and derived vehicle-stat synchronization are handled by Full Speed Ahead rather than TradeHub Markets.
 - HyperDrive jump distance is read from the HyperDrive item's Custom Label, falling back to item text or tier defaults only when needed.
 - Dock / Travel can optionally broadcast a configured sound effect to all players.
 - Market price/profit columns use smart opportunity sorting for buy and sell pages.

@@ -868,59 +868,6 @@
   margin-right: 6px;
 }
 
-.thm-damage-tool label {
-  display: block;
-  margin: 8px 0 3px;
-  font-weight: 900;
-}
-
-.thm-damage-tool select,
-.thm-damage-tool input[type="number"] {
-  width: 100%;
-}
-
-.thm-damage-summary {
-  line-height: 1.35;
-}
-
-.thm-fuel-scoop-grant {
-  display: grid;
-  grid-template-columns: minmax(90px, 1fr) 190px;
-  gap: 6px 8px;
-  align-items: end;
-  margin-top: 8px;
-}
-
-.thm-fuel-scoop-grant label {
-  grid-column: 1 / -1;
-}
-
-.thm-fuel-scoop-grant button {
-  min-height: 34px;
-  white-space: nowrap;
-}
-
-.thm-heat-sink-card {
-  margin-top: 8px;
-  padding: 8px;
-  border: 1px solid rgba(42, 184, 75, 0.55);
-  background: rgba(18, 26, 23, 0.12);
-}
-
-.thm-heat-sink-card.thm-heat-sink-danger {
-  border-color: rgba(190, 45, 45, 0.65);
-  background: rgba(90, 20, 20, 0.12);
-}
-
-.thm-heat-sink-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.thm-heat-sink-card button {
-  font-weight: 900;
-}
 
 .thm-mission-row {
   display: grid;
