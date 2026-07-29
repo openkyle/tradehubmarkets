@@ -62,7 +62,8 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - Docking uses a Market State dropdown and a Dock / Travel submit button.
 - Starport preloads its splash image with a small loading bar and reserves image space to prevent first-open layout collapse.
 - TradeHub Settings are available from Foundry Configure Settings and the GM gear button, using one stable settings form with locked compendium dropdowns and optional folder dropdowns.
-- Ship Tools are integrated behind a rocket button and bundled as a player macro.
+- Vehicle sheets can show a compact TradeHub block with capital, the current location's market, and cargo access.
+- Vehicle Long Rest, Registration, Glaxon enrollment, Chat Loadout, and Fuel Release have moved to Full Speed Ahead. TradeHub continues to honor the shared Glaxon insurance flag when pricing Starport repairs.
 - Character Status is integrated behind the skull button and bundled as a macro, with Poison, Foundry Status, and Necrotic tabs for selected character tokens.
 - Vessel combat, scans, mining/fuel-scooping damage, combat repair, Make Pristine, and derived vehicle-stat synchronization are handled by Full Speed Ahead rather than TradeHub Markets.
 - HyperDrive jump distance is read from the HyperDrive item's Custom Label, falling back to item text or tier defaults only when needed.

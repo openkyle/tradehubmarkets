@@ -510,8 +510,8 @@ function registerSettings() {
     onChange: value => value ? GmBar.render() : GmBar.close()
   });
   register("showVehicleSheetTools", {
-    name: "Show Ship Tools Buttons on Vehicle Sheets",
-    hint: "Injects TradeHub Loadout, Cargo, Long Rest, Registration, and Fuel Release buttons into dnd5e and Tidy5e vehicle sheets.",
+    name: "Show TradeHub Markets and Cargo on Vehicle Sheets",
+    hint: "Adds TradeHub capital, the current location's market, and cargo access to dnd5e and Tidy5e vehicle sheets.",
     scope: "world",
     config: false,
     type: Boolean,
@@ -1146,12 +1146,8 @@ async function processGmRequest(message) {
     if (message.action === "deleteLocation") return Transactions.deleteLocation(message.payload, message.userId);
     if (message.action === "shipyardBuy") return Transactions.shipyardBuy(message.payload, message.userId);
     if (message.action === "shipyardSell") return Transactions.shipyardSell(message.payload, message.userId);
-    if (message.action === "shipLongRest") return Transactions.shipLongRest(message.payload, message.userId);
-    if (message.action === "shipRegister") return Transactions.shipRegister(message.payload, message.userId);
-    if (message.action === "shipInsurance") return Transactions.shipInsurance(message.payload, message.userId);
     if (message.action === "payBounties") return Transactions.payBounties(message.payload, message.userId);
     if (message.action === "shipJettison") return Transactions.shipJettison(message.payload, message.userId);
-    if (message.action === "shipFuelPurge") return Transactions.shipFuelPurge(message.payload, message.userId);
     if (message.action === "saveData") return saveData(message.payload.data);
   } catch (err) {
     console.error(err);
@@ -1946,15 +1942,6 @@ function repairCostForItem(item, missing, ship = null) {
   return isGlaxonInsured(ship) ? Math.floor(raw * 0.5) : raw;
 }
 
-function fullRepairValue(ship) {
-  return damageableModules(ship).reduce((total, item) => total + itemMaxHp(item) * repairUnitCost(item), 0);
-}
-
-function glaxonPremium(ship) {
-  const value = fullRepairValue(ship);
-  return value > 0 ? Math.ceil(value * 0.05) : 0;
-}
-
 class DockingPage {
   static async showDockingPage() {
     if (!game.user.isGM) return ui.notifications.error("Only the GM can dock or update TradeHub markets.");
@@ -2167,68 +2154,6 @@ function shipSpeedText(ship) {
   return `${speed}${units ? ` ${units}` : ""}`;
 }
 
-function shipValue(ship) {
-  return parseNumber(ship?.system?.traits?.dimensions || 0) + parseNumber(ship?.system?.details?.source?.custom || 0);
-}
-
-function upkeepCost(ship) {
-  return Math.floor(shipValue(ship) * 0.002);
-}
-
-function stringsFromValue(value, depth = 0) {
-  if (depth > 4 || value == null) return [];
-  if (typeof value === "string" || typeof value === "number") return [String(value)];
-  if (Array.isArray(value)) return value.flatMap(entry => stringsFromValue(entry, depth + 1));
-  if (typeof value === "object") return Object.values(value).flatMap(entry => stringsFromValue(entry, depth + 1));
-  return [];
-}
-
-function parseHyperdriveFormula(item) {
-  if (!item) return "";
-  const customCandidates = [
-    item.system?.source?.custom,
-    item.system?.details?.source?.custom
-  ];
-  for (const text of customCandidates) {
-    const plain = stripHtml(text);
-    const match = plain.match(/^\s*(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*(?:LY|light\s*years?)?\s*$/i);
-    if (match) return `${normalizeDiceFormula(match[1])} LY`;
-  }
-  const candidates = [
-    item.system?.formula,
-    item.system?.description?.value,
-    item.system?.description?.chat,
-    item.system?.description?.unidentified,
-    ...stringsFromValue(item.system)
-  ];
-  for (const text of candidates) {
-    const plain = stripHtml(text);
-    const match = plain.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*(?:LY|light\s*years?)/i);
-    if (match) return `${normalizeDiceFormula(match[1])} LY`;
-  }
-  return "";
-}
-
-function normalizeDiceFormula(formula) {
-  return String(formula || "").replace(/\s+/g, " ").replace(/\s*([+-])\s*/g, " $1 ").trim();
-}
-
-function hyperdriveFallbackFormula(item) {
-  const name = item?.name || "";
-  if (/\[S\]/i.test(name)) return "6d4 + 14 LY";
-  if (/\[A\]/i.test(name)) return "4d4 + 12 LY";
-  if (/\[B\]/i.test(name)) return "3d4 + 10 LY";
-  if (/\[C\]/i.test(name)) return "2d4 + 4 LY";
-  if (/\[D\]/i.test(name)) return "1d4 + 6 LY";
-  return item ? "Unknown HyperDrive" : "No HyperDrive module found";
-}
-
-function hyperdriveRange(ship) {
-  const hyperdrive = getShipItems(ship).find(item => isEquippedShipModule(item) && /hyperdrive/i.test(item.name));
-  if (!hyperdrive) return "No HyperDrive module found";
-  return parseHyperdriveFormula(hyperdrive) || hyperdriveFallbackFormula(hyperdrive);
-}
-
 function hpBarHtml(ship) {
   const hp = ship?.system?.attributes?.hp || {};
   const value = Number(hp.value || 0);
@@ -2266,18 +2191,17 @@ function placeVehicleSheetTools(root, actor) {
 
 function vehicleSheetToolsHtml(_actor) {
   const tradeHubActive = game.modules.get(MODULE_ID)?.active === true;
-  const docked = tradeHubActive && serviceState().any;
+  const state = serviceState();
+  const docked = tradeHubActive && state.any;
+  const locationName = getData().currentLocation || "";
+  const marketLabel = locationName ? `${locationName} Markets` : "TradeHub Markets";
   const marketButton = tradeHubActive
-    ? `<button type="button" data-thm-sheet-tool="market" ${docked ? "" : "disabled"} title="${docked ? "Open TradeHub Markets" : "TradeHub Markets is unavailable while undocked"}"><i class="fas fa-store"></i> TradeHub Markets</button>`
+    ? `<button type="button" data-thm-sheet-tool="market" ${docked ? "" : "disabled"} title="${docked ? `Open ${escapeHtml(marketLabel)}` : "TradeHub Markets is unavailable while undocked"}"><i class="fas fa-store"></i> ${escapeHtml(marketLabel)}</button>`
     : "";
   return `<div class="tradehub-markets thm-sheet-shiptools">
-    ${marketButton}
     <div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>
+    ${marketButton}
     <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
-    <button type="button" data-thm-sheet-tool="rest"><i class="fas fa-bed"></i> Long Rest</button>
-    <button type="button" data-thm-sheet-tool="registration"><i class="fas fa-registered"></i> Registration</button>
-    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-comment-alt"></i> Chat Loadout</button>
-    <button type="button" data-thm-sheet-tool="fuel"><i class="fas fa-fire"></i> Fuel Release</button>
   </div>`;
 }
 
@@ -2318,11 +2242,7 @@ function bindVehicleSheetTools(panel, actor) {
     selectedShipName = actor.name;
     const tool = ev.currentTarget.dataset.thmSheetTool;
     if (tool === "market") return SplashPage.showSplash();
-    if (tool === "loadout") return ShipToolsPage.showLoadout(actor, { printOnly: true });
     if (tool === "cargo") return ShipToolsPage.showCargo(actor);
-    if (tool === "rest") return ShipToolsPage.confirmLongRest(actor);
-    if (tool === "registration") return ShipToolsPage.showRegistration(actor);
-    if (tool === "fuel") return ShipToolsPage.showFuelRelease(actor);
   });
 }
 
@@ -2342,12 +2262,8 @@ class ShipToolsPage {
       </div>
       <div id="thm-tools-hp">${hpBarHtml(initial)}</div>
       <div class="thm-tools-grid">
-        <button type="button" id="thm-loadout"><i class="fas fa-list"></i> View Loadout</button>
         <button type="button" id="thm-cargo"><i class="fas fa-box-open"></i> View Cargo</button>
         <button type="button" id="thm-sheet"><i class="fas fa-id-card"></i> View ${setting("vehicleLabel")} Sheet</button>
-        <button type="button" id="thm-rest"><i class="fas fa-bed"></i> Long Rest</button>
-        <button type="button" id="thm-register"><i class="fas fa-registered"></i> Registration</button>
-        <button type="button" id="thm-fuel"><i class="fas fa-fire"></i> Fuel Release</button>
       </div>
     </div>`;
     new Dialog({
@@ -2367,49 +2283,10 @@ class ShipToolsPage {
           const ship = currentShip();
           if (ship?.img) new ImagePopout(ship.img, { title: `${ship.name} Artwork`, shareable: true, uuid: ship.uuid }).render(true);
         });
-        html.find("#thm-loadout").on("click", () => this.showLoadout(currentShip()));
         html.find("#thm-cargo").on("click", () => this.showCargo(currentShip()));
         html.find("#thm-sheet").on("click", () => currentShip()?.sheet?.render(true));
-        html.find("#thm-rest").on("click", () => this.confirmLongRest(currentShip()));
-        html.find("#thm-register").on("click", () => this.showRegistration(currentShip()));
-        html.find("#thm-fuel").on("click", () => this.showFuelRelease(currentShip()));
       }
     }, { ...dialogOptions(), width: 620 }).render(true);
-  }
-
-  static showLoadout(ship, { printOnly = false } = {}) {
-    if (!ship) return ui.notifications.error("Selected ship not found.");
-    const stats = cargoStats(ship);
-    const cargoItems = getShipItems(ship).filter(item => ["loot", "consumable"].includes(item.type) && Number(item.system?.quantity || 0) > 0);
-    const modules = damageableModules(ship);
-    const cargoValue = cargoItems.reduce((total, item) => total + Number(item.system?.price?.value || 0) * Number(item.system?.quantity || 0), 0);
-    const shieldHp = modules.filter(module => /shield generator/i.test(module.name)).reduce((total, module) => total + Number(module.system?.hp?.value || 0), 0);
-    const fuel = cargoItems.find(item => item.name.toLowerCase() === "hydrogen fuel");
-    const content = `<div class="thm-root thm-compact">
-      <strong>${ship.name}</strong><br>
-      HP: ${ship.system?.attributes?.hp?.value || 0} HP<br>
-	      Current Shields: ${shieldHp} HP<br>
-	      Max Jump Distance: ${hyperdriveRange(ship)}<br>
-	      Ship Value: ${formatGp(shipValue(ship))}<br>
-	      Glaxon Insurance: ${isGlaxonInsured(ship) ? `Active (${formatGp(glaxonPremium(ship))} / Long Rest)` : "Not insured"}<br>
-	      AC: ${ship.system?.attributes?.ac?.value || 0}<br><br>
-      <strong>Modules:</strong><ul>${modules.map(module => `<li>${module.name}</li>`).join("") || "<li>None</li>"}</ul>
-      <strong>Cargo:</strong><br>
-      Cargo Capacity: ${Math.floor(stats.max).toLocaleString()} lbs<br>
-      Current Loadout: ${Math.floor(stats.current).toLocaleString()} lbs<br>
-      Cargo Value: ${formatGp(cargoValue)}<br>
-      Fuel: Hydrogen x${Number(fuel?.system?.quantity || 0)} tonnes<br>
-      ${stats.remaining >= 0 ? `<span class="thm-green">${Math.floor(stats.remaining).toLocaleString()} lbs of cargo space remaining.</span>` : `<span class="thm-red">WARNING: OVER WEIGHT<br>Hyperdrive Disabled</span>`}
-    </div>`;
-    if (printOnly) return ChatMessage.create({ user: game.user.id, content });
-    new Dialog({
-      title: `${ship.name} Loadout`,
-      content,
-      buttons: {
-        print: { label: "Print to Chat", callback: () => ChatMessage.create({ user: game.user.id, content }) },
-        close: { label: "Close" }
-      }
-    }, { ...dialogOptions(), width: 560 }).render(true);
   }
 
   static showCargo(ship) {
@@ -2467,88 +2344,6 @@ class ShipToolsPage {
     }, { ...dialogOptions(), width: 760 }).render(true);
   }
 
-	  static confirmLongRest(ship) {
-	    if (!ship) return ui.notifications.error("Selected ship not found.");
-	    const value = shipValue(ship);
-	    const cost = upkeepCost(ship);
-	    const insured = isGlaxonInsured(ship);
-	    const premium = insured ? glaxonPremium(ship) : 0;
-	    const totalCost = cost + premium;
-	    Dialog.confirm({
-	      title: "Long Rest Confirmation",
-	      content: `<div class="thm-root thm-compact thm-center">
-	        <p>When your ${setting("vehicleLabel").toLowerCase()} takes a Long Rest, shields recharge and crew actions are restored.</p>
-	        <p>Equipment condition will not change unless repaired. During this time, the ${setting("vehicleLabel").toLowerCase()} cannot enter combat.</p>
-	        <p><strong>Ship Value:</strong> ${formatGp(value)}<br><strong>Upkeep:</strong> ${formatGp(cost)}${insured ? `<br><strong>Glaxon Premium:</strong> ${formatGp(premium)}<br><strong>Total Due:</strong> ${formatGp(totalCost)}` : ""}</p>
-	      </div>`,
-      yes: () => requestGm("shipLongRest", { shipId: ship.id }),
-      no: () => {},
-      defaultYes: false
-    });
-  }
-
-	  static showRegistration(ship) {
-	    if (!ship) return ui.notifications.error("Selected ship not found.");
-	    const crew = ship.system?.cargo?.crew || [];
-	    const wanted = crew.some(member => typeof member.name === "string" && member.name.includes("[Wanted]"));
-	    const cost = wanted ? 4000 : 2000;
-	    const insured = isGlaxonInsured(ship);
-	    const premium = glaxonPremium(ship);
-	    const fullValue = fullRepairValue(ship);
-	    new Dialog({
-	      title: "Ship Registration",
-	      content: `<div class="thm-root thm-compact">
-	        <p>At any point, you can reregister your ship's designation. If you are <strong>[Wanted]</strong>, the cost is doubled.</p>
-	        <label><strong>Enter ${setting("vehicleLabel")} Name:</strong></label>
-	        <input type="text" id="vessel-name" value="${ship.name}">
-	        <p><strong>Cost:</strong> ${formatGp(cost)}</p>
-	        <hr>
-	        <p><strong>Glaxon Insurance:</strong> ${insured ? `<span class="thm-green">Active</span>` : "Not insured"}<br>
-	        Insure my vehicle at a base premium of 5% total repair value per long rest.<br>
-	        <strong>Benefit:</strong> 50% off repair costs while insured.<br>
-	        <strong>Full Repair Value:</strong> ${formatGp(fullValue)}<br>
-	        <strong>Premium per Long Rest:</strong> ${formatGp(premium)}</p>
-	      </div>`,
-	      buttons: {
-	        pay: { label: "Change Ship Name", callback: html => {
-	          const name = html.find("#vessel-name").val()?.trim();
-	          if (!name) return ui.notifications.error("You must enter a valid vessel name.");
-	          requestGm("shipRegister", { shipId: ship.id, name, cost });
-	        } },
-        insure: { label: insured ? "Cancel Coverage" : "Insure My Vehicle", callback: () => {
-          requestGm("shipInsurance", { shipId: ship.id, insured: !insured });
-        } },
-	        cancel: { label: "Cancel" }
-	      }
-	    }, { ...dialogOptions(), width: 460 }).render(true);
-	  }
-
-  static showFuelRelease(ship) {
-    if (!ship) return ui.notifications.error("Selected ship not found.");
-    new Dialog({
-      title: "Emergency Hydrogen Fuel Release",
-      content: `<div class="thm-root thm-compact">
-        <label>Hydrogen (tonnes):</label>
-        <input type="number" id="fuel-tonnes" value="1" min="0">
-        <p>1 tonne of Hydrogen fuel covers 1 hyperdrive jump, or 1 LY and 1 day of supercruise travel.</p>
-      </div>`,
-      buttons: {
-        warning: { label: "<strong>Purge Hydrogen</strong>", callback: async html => {
-          const quantity = Number(html.find("#fuel-tonnes").val() || 0);
-          if (quantity < 0) return ui.notifications.error("Invalid value.");
-          const confirmed = await Dialog.confirm({
-            title: "WARNING: HAZARDOUS OPERATION",
-            content: `<div class="thm-red"><strong>WARNING:</strong> DO NOT release hydrogen near heat or open flame. Contents under pressure.</div><p>Are you sure you want to proceed?</p>`,
-            yes: () => true,
-            no: () => false,
-            defaultYes: false
-          });
-          if (confirmed) requestGm("shipFuelPurge", { shipId: ship.id, quantity });
-        } },
-        cancel: { label: "Cancel" }
-      }
-    }, { ...dialogOptions(), width: 460 }).render(true);
-  }
 }
 
 class CharacterStatusPage {
@@ -4101,87 +3896,6 @@ class Transactions {
     broadcastRefresh();
   }
 
-	  static async shipLongRest({ shipId }, userId) {
-	    const ship = game.actors.get(shipId);
-	    if (!ship) throw new Error("Selected ship not found.");
-	    const value = shipValue(ship);
-	    const cost = upkeepCost(ship);
-	    const insured = isGlaxonInsured(ship);
-	    const premium = insured ? glaxonPremium(ship) : 0;
-	    const totalCost = cost + premium;
-	    const currentCapital = bankBalance();
-	    const remaining = Math.max(0, currentCapital - totalCost);
-	    const unpaid = Math.max(0, totalCost - currentCapital);
-	    await updateBank(remaining);
-    for (const item of ship.items) {
-      const uses = item.system?.uses;
-      if (uses?.max) await item.update({ "system.uses.value": uses.max });
-      if (isEquippedShipModule(item) && /shield generator/i.test(item.name)) {
-        await restoreModuleHp(item, Number(item.system?.hp?.max || item.system?.hp?.value || 0));
-      }
-    }
-    const modules = damageableModules(ship).filter(item => !/shield generator/i.test(item.name));
-    const totalModuleHp = modules.reduce((total, item) => total + Number(item.system?.hp?.value || 0), 0);
-    await ship.update({ "system.attributes.hp.min": totalModuleHp });
-    await refreshShipTokenEffects(ship);
-    if (unpaid > 0) {
-      await ChatMessage.create({
-	      content: `Long rest costs of ${formatGp(unpaid)} were not fully paid. During the next adventuring day, equipment or insurance service may fail unexpectedly at the GM's discretion.`,
-	      whisper: ChatMessage.getWhisperRecipients("GM")
-	    });
-    }
-    await ChatMessage.create({
-      content: `<strong style="color:green;">SHIP MAINTENANCE</strong><br>
-        Each long rest, the ship handles air filtration, water purification, waste management, sanitation, upkeep, laundry, and diagnostics.<br><br>
-	        <strong>Ship Name:</strong> ${ship.name}<br>
-	        <strong>Ship Value:</strong> ${formatGp(value)}<br>
-	        <strong>Upkeep Cost:</strong> ${formatGp(cost)}<br>
-	        ${insured ? `<strong>Glaxon Premium:</strong> ${formatGp(premium)}<br><strong>Total Long Rest Cost:</strong> ${formatGp(totalCost)}<br>` : ""}
-	        <strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}<br>
-	        <em>Shields and item uses restored. Vessel HP minimum now reflects equipment condition.</em>`
-	    });
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
-	  static async shipRegister({ shipId, name, cost }, userId) {
-    const ship = game.actors.get(shipId);
-    if (!ship) throw new Error("Selected ship not found.");
-    const price = Number(cost || 0);
-    if (bankBalance() < price) throw new Error("Not enough TradeHub capital.");
-    const oldName = ship.name;
-    await updateBank(bankBalance() - price);
-    await ship.update({ name });
-    await ChatMessage.create({
-      content: `<strong>${game.users.get(userId)?.name || "A player"}</strong> updated the registration for <strong>${oldName}</strong>.<br>New designation: <strong>${name}</strong><br><strong>Cost:</strong> ${formatGp(price)}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
-    });
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-	    broadcastRefresh();
-	  }
-
-	  static async shipInsurance({ shipId, insured }, userId) {
-	    const ship = game.actors.get(shipId);
-	    if (!ship) throw new Error("Selected ship not found.");
-	    const active = insured !== false;
-	    if (active) await ship.setFlag(MODULE_ID, "glaxonInsured", true);
-	    else await ship.unsetFlag(MODULE_ID, "glaxonInsured");
-	    await ChatMessage.create({
-	      user: userId,
-	      content: active
-	        ? `<strong>Glaxon Insurance Activated</strong><br><strong>${ship.name}</strong> now receives 50% off repair costs while insured.<br><strong>Premium per Long Rest:</strong> ${formatGp(glaxonPremium(ship))}<br><strong>Full Repair Value:</strong> ${formatGp(fullRepairValue(ship))}<br><em>Premiums are billed when the Long Rest button is used.</em>`
-	        : `<strong>Glaxon Insurance Cancelled</strong><br><strong>${ship.name}</strong> no longer receives the Glaxon repair discount and will not be billed a Glaxon premium on Long Rest.`,
-	      speaker: { alias: "Glaxon Insurance" }
-	    });
-	    const data = getData();
-	    syncShipDirectory(data);
-	    await setSetting("data", data);
-	    broadcastRefresh();
-	  }
-
 	  static async payBounties({ target }, userId) {
 	    const rows = bountyRows();
 	    const total = rows.reduce((sum, row) => sum + row.bounty, 0);
@@ -4226,24 +3940,6 @@ class Transactions {
         content: `<strong>${game.users.get(userId)?.name || "A player"} has updated ${ship.name} loadout:</strong><br><br><strong>Cargo Jettisoned:</strong><br>${jettisoned.join("<br>")}`
       });
     }
-    const data = getData();
-    syncShipDirectory(data);
-    await setSetting("data", data);
-    broadcastRefresh();
-  }
-
-  static async shipFuelPurge({ shipId, quantity }, userId) {
-    const ship = game.actors.get(shipId);
-    if (!ship) throw new Error("Selected ship not found.");
-    const item = ship.items.find(i => i.name.toLowerCase() === "hydrogen fuel" && ["loot", "consumable"].includes(i.type));
-    if (!item) throw new Error("Hydrogen Fuel item not found.");
-    const amount = Math.max(0, Number(quantity || 0));
-    const remaining = Math.max(0, Number(item.system?.quantity || 0) - amount);
-    await item.update({ "system.quantity": remaining });
-    await ChatMessage.create({
-      user: userId,
-      content: `<strong>${ship.name}</strong><br>${amount} tonnes of Hydrogen purged.${remaining <= 0 ? `<br><span style="color:red;font-weight:bold;">WARNING: OUT OF FUEL</span>` : ""}`
-    });
     const data = getData();
     syncShipDirectory(data);
     await setSetting("data", data);
