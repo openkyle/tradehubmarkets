@@ -2319,12 +2319,18 @@ function placeVehicleSheetTools(root, actor) {
 }
 
 function vehicleSheetToolsHtml(_actor) {
+  const tradeHubActive = game.modules.get(MODULE_ID)?.active === true;
+  const docked = tradeHubActive && serviceState().any;
+  const marketButton = tradeHubActive
+    ? `<button type="button" data-thm-sheet-tool="market" ${docked ? "" : "disabled"} title="${docked ? "Open TradeHub Markets" : "TradeHub Markets is unavailable while undocked"}"><i class="fas fa-store"></i> TradeHub Markets</button>`
+    : "";
   return `<div class="tradehub-markets thm-sheet-shiptools">
+    ${marketButton}
     <div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>
-    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-print"></i> Print Loadout</button>
     <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
     <button type="button" data-thm-sheet-tool="rest"><i class="fas fa-bed"></i> Long Rest</button>
     <button type="button" data-thm-sheet-tool="registration"><i class="fas fa-registered"></i> Registration</button>
+    <button type="button" data-thm-sheet-tool="loadout"><i class="fas fa-comment-alt"></i> Chat Loadout</button>
     <button type="button" data-thm-sheet-tool="fuel"><i class="fas fa-fire"></i> Fuel Release</button>
   </div>`;
 }
@@ -2365,6 +2371,7 @@ function bindVehicleSheetTools(panel, actor) {
     selectedShipId = actor.id;
     selectedShipName = actor.name;
     const tool = ev.currentTarget.dataset.thmSheetTool;
+    if (tool === "market") return SplashPage.showSplash();
     if (tool === "loadout") return ShipToolsPage.showLoadout(actor, { printOnly: true });
     if (tool === "cargo") return ShipToolsPage.showCargo(actor);
     if (tool === "rest") return ShipToolsPage.confirmLongRest(actor);
