@@ -4899,7 +4899,13 @@ class Transactions {
       const minRange = shortRanges.length ? Math.min(...shortRanges) : 0;
       const maxRange = longRanges.length ? Math.max(...longRanges) : 0;
       const moduleList = modules.length
-        ? modules.map(item => itemHp(item) <= 0 ? `<b>Offline - ${escapeHtml(item.name)}</b>` : escapeHtml(item.name)).join("<br>")
+        ? modules.map(item => {
+          const maxHp = Math.max(0, itemMaxHp(item));
+          const currentHp = Math.max(0, itemHp(item));
+          const condition = maxHp > 0 ? Math.max(0, Math.min(100, Math.round(currentHp / maxHp * 100))) : 0;
+          const line = `${condition}% - ${escapeHtml(item.name)}`;
+          return currentHp <= 0 ? `<b>${line} (Offline)</b>` : line;
+        }).join("<br>")
         : "None";
       content = `<div class="thm-chat-card">
         <b class="thm-green">Tactical Scan SUCCESS!</b><br>
