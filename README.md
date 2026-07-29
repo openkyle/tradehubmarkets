@@ -64,6 +64,7 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - TradeHub Settings are available from Foundry Configure Settings and the GM gear button, using one stable settings form with locked compendium dropdowns and optional folder dropdowns.
 - Vehicle sheets can show a compact TradeHub block with capital, the current location's market, and cargo access.
 - Vehicle Long Rest, Registration, Glaxon enrollment, Chat Loadout, and Fuel Release have moved to Full Speed Ahead. TradeHub continues to honor the shared Glaxon insurance flag when pricing Starport repairs.
+- Integrations can share TradeHub's existing capital ledger through `game.tradehub.getCapital()` / `capital()` and `setCapital(gp)` / `updateBank(gp)`.
 - Character Status is integrated behind the skull button and bundled as a macro, with Poison, Foundry Status, and Necrotic tabs for selected character tokens.
 - Vessel combat, scans, mining/fuel-scooping damage, combat repair, Make Pristine, and derived vehicle-stat synchronization are handled by Full Speed Ahead rather than TradeHub Markets.
 - HyperDrive jump distance is read from the HyperDrive item's Custom Label, falling back to item text or tier defaults only when needed.

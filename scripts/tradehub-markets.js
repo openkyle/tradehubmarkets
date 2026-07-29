@@ -76,6 +76,10 @@ function moduleApi() {
   game.tradehub.BankingPage = BankingPage;
   game.tradehub.ConfigPage = ConfigPage;
   game.tradehub.refresh = refreshOpenWindows;
+  game.tradehub.getCapital = bankBalance;
+  game.tradehub.capital = bankBalance;
+  game.tradehub.setCapital = updateBank;
+  game.tradehub.updateBank = updateBank;
 }
 
 Hooks.once("init", () => {
