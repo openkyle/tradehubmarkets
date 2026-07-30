@@ -89,6 +89,13 @@
       </label>
       <input type="number" name="repairCostPerShieldPoint" value="{{settings.repairCostPerShieldPoint}}">
     </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Ship Long Rest Upkeep Percentage</span>
+        <small>Percentage of total ship cost billed for each vehicle long rest. Enter 0.2 for 0.2%, 1 for 1%, etc.</small>
+      </label>
+      <input type="number" name="shipUpkeepPercent" min="0" step="0.01" value="{{settings.shipUpkeepPercent}}">
+    </div>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
         <span>Launch Marketplace On Dock</span>

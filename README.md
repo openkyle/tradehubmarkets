@@ -68,6 +68,7 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - Repeated module families are nested by class in Ship Outfitting, with Prismatic and S tiers sorted before A through E.
 - Completed outfitting orders equip purchased modules, announce the systems brought online, and close only after GM confirmation.
 - Weapon listings show damage plus short and long range, and open vehicle-sheet panels refresh whenever TradeHub capital changes.
+- The Capital settings tab owns the vehicle long-rest upkeep percentage (default 0.2% of total ship cost) and exposes it through `game.tradehub`.
 - Compendium documents tagged `[Hidden]` are excluded consistently from trade goods, consumables, restock, shipyard craft, and Ship Outfitting inventory.
 - Shipyard Modules support the same settings-based Folder/Subfolder selector as the other compendium storefronts.
 - Quantity fields use typed values plus Clear/Max controls, without extra arrow stepper buttons.

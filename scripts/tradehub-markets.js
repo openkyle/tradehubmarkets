@@ -82,6 +82,8 @@ function moduleApi() {
   game.tradehub.capital = bankBalance;
   game.tradehub.setCapital = updateBank;
   game.tradehub.updateBank = updateBank;
+  game.tradehub.getShipUpkeepPercent = shipUpkeepPercent;
+  game.tradehub.calculateShipUpkeep = calculateShipUpkeep;
 }
 
 Hooks.once("init", () => {
@@ -521,6 +523,14 @@ function registerSettings() {
     config: false,
     type: Number,
     default: 100
+  });
+  register("shipUpkeepPercent", {
+    name: "Ship Long Rest Upkeep Percentage",
+    hint: "Percentage of total ship cost charged as upkeep for each vehicle long rest. Enter 0.2 for 0.2%.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 0.2
   });
   register("vehicleLabel", { name: "Vehicle Label", hint: "Shown in menus as Vessel, Ship, Vehicle, Carriage, etc.", scope: "world", config: false, type: String, default: "Vessel" });
   register("showGmBar", {
@@ -1077,6 +1087,14 @@ function bankActor() {
 
 function bankBalance() {
   return Number(getData().capital || 0);
+}
+
+function shipUpkeepPercent() {
+  return Math.max(0, Number(setting("shipUpkeepPercent") ?? 0.2));
+}
+
+function calculateShipUpkeep(totalShipCost) {
+  return Math.floor(Math.max(0, Number(totalShipCost || 0)) * shipUpkeepPercent() / 100);
 }
 
 async function updateBank(gp) {
@@ -3382,6 +3400,7 @@ class TradeHubSettingsForm extends FormApplication {
         vehicleLabel: setting("vehicleLabel") || "Vessel",
         repairCostPerHp: Number(setting("repairCostPerHp") || 0),
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
+        shipUpkeepPercent: shipUpkeepPercent(),
         stockMin: Number(setting("stockMin") || 0),
         stockMax: Number(setting("stockMax") || 0),
         maxPriceChangePercent: Number(setting("maxPriceChangePercent") || 0),
@@ -3482,6 +3501,7 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("warezHackSoundVolume", Math.max(0, Math.min(1, Number(formData.warezHackSoundVolume ?? 0.8))));
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
+    await setSetting("shipUpkeepPercent", Math.max(0, Number(formData.shipUpkeepPercent ?? 0.2)));
     await setSetting("stockMin", Number(formData.stockMin || 0));
     await setSetting("stockMax", Number(formData.stockMax || 0));
     await setSetting("maxPriceChangePercent", Number(formData.maxPriceChangePercent || 0));
