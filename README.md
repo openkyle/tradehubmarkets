@@ -11,9 +11,10 @@ TradeHub Markets is a Foundry VTT v11 / DnD5e 2.4.1 module rewrite of the origin
 5. Set **Ammunition Restock** to the dedicated supply/restock compendium.
 6. Set **Vehicle Consumables** for vehicle equipment/repair references.
 7. Set **Shipyard Vehicles** to the compendium containing purchasable vehicle actors.
-8. Set **Advertisement Folder** to a Foundry FilePicker path or folder URL. Each player client randomly pulls an ad when their market opens.
-9. Set **TradeHub Capital** in the floating GM gear menu. TradeHub manages capital internally and no longer requires a Bank of Holding actor after initial migration.
-10. Optional: create a visible journal named **TradeHub News Stories**. Use pages named after locations, or a folder named **TradeHub News Stories** containing location journals. Each line is eligible for the market ticker.
+8. Set **Shipyard Modules** to the item compendium containing equipment and weapon modules offered through Ship Outfitting.
+9. Set **Advertisement Folder** to a Foundry FilePicker path or folder URL. Each player client randomly pulls an ad when their market opens.
+10. Set **TradeHub Capital** in the floating GM gear menu. TradeHub manages capital internally and no longer requires a Bank of Holding actor after initial migration.
+11. Optional: create a visible journal named **TradeHub News Stories**. Use pages named after locations, or a folder named **TradeHub News Stories** containing location journals. Each line is eligible for the market ticker.
 
 The old macros still work:
 
@@ -57,6 +58,9 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - TradeHub Settings include a Help tab with concise setup and workflow tips for compendiums, markets, vehicles, capital, Starport repairs, character statuses, news, and GM controls.
 - TradeHub Settings now open as a larger configuration window with scrollable tab content.
 - Shipyard purchase options are ordered by parsed purchase price and shipyard action buttons align across the lower panels.
+- Shipyard equipment sales use an itemized checkbox dropdown, show each module's value and 75% trade credit, and include only selected modules in the transaction.
+- Shipyard Services now branches into the existing craft Shipyard and a compendium-backed Ship Outfitting store, grouped by folder and sorted by module name and price.
+- Ship Outfitting also itemizes installed modules for selective trade-in at the established 75% credit, with purchase cost, trade credit, net transaction, and resulting capital shown before confirmation.
 - Quantity fields use typed values plus Clear/Max controls, without extra arrow stepper buttons.
 - Starport Services updates its displayed capital in-place after buy/sell transactions and uses a centered vessel selector layout.
 - Docking uses a Market State dropdown and a Dock / Travel submit button.

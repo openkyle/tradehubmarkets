@@ -760,6 +760,100 @@
   margin: 8px 0;
 }
 
+.thm-shipyard-equipment-control {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  align-items: start;
+  gap: 8px;
+  position: relative;
+}
+
+.thm-shipyard-equipment-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.thm-shipyard-equipment-picker summary {
+  min-height: 30px;
+  box-sizing: border-box;
+  border: 1px solid rgba(80, 80, 72, 0.45);
+  background: rgba(255, 255, 245, 0.42);
+  padding: 5px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 800;
+  list-style: none;
+}
+
+.thm-shipyard-equipment-picker summary::-webkit-details-marker {
+  display: none;
+}
+
+.thm-shipyard-equipment-picker.disabled summary {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.thm-shipyard-equipment-picker[open] summary i {
+  transform: rotate(180deg);
+}
+
+.thm-equipment-options {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  right: 0;
+  width: min(430px, 80vw);
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid rgba(50, 50, 45, 0.7);
+  background: #eeece2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
+  padding: 5px;
+}
+
+.thm-equipment-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(80, 80, 72, 0.18);
+  font-weight: 700;
+}
+
+.thm-equipment-option:last-child {
+  border-bottom: 0;
+}
+
+.thm-equipment-option input {
+  margin: 0;
+}
+
+.thm-equipment-option-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.thm-equipment-option-value {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.thm-equipment-option-value small {
+  font-weight: 400;
+}
+
+.thm-equipment-empty {
+  padding: 7px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
 .thm-shipyard-trade-panel #sell-only {
   margin-top: auto;
 }
@@ -1007,8 +1101,234 @@
   flex: 0 0 auto;
 }
 
+.thm-shipyard-services {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.thm-shipyard-services button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 78px;
+  padding: 12px;
+  text-align: left;
+}
+
+.thm-shipyard-services button > i {
+  width: 28px;
+  font-size: 24px;
+  text-align: center;
+}
+
+.thm-shipyard-services button span {
+  display: grid;
+  gap: 3px;
+}
+
+.thm-shipyard-services button small {
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.thm-outfitting {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.thm-outfit-summary,
+.thm-outfit-footer {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 8px 18px;
+  align-items: center;
+}
+
+.thm-outfit-summary {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(30, 30, 26, 0.35);
+}
+
+.thm-outfit-summary label {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.thm-outfit-trade {
+  margin-top: 10px;
+  border: 1px solid rgba(30, 30, 26, 0.3);
+}
+
+.thm-outfit-trade summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: rgba(35, 35, 31, 0.1);
+}
+
+.thm-outfit-trade > p {
+  margin: 8px 10px;
+  font-size: 0.9em;
+}
+
+#thm-outfit-trade-items {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.thm-outfit-trade-row {
+  display: grid;
+  grid-template-columns: 28px 34px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 4px 2px;
+  border-top: 1px solid rgba(30, 30, 26, 0.14);
+}
+
+.thm-outfit-trade-row input {
+  margin: 0;
+}
+
+.thm-outfit-trade-row img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border: 1px solid #222;
+}
+
+.thm-outfit-trade-row small {
+  white-space: nowrap;
+}
+
+.thm-outfit-catalog {
+  max-height: min(560px, 58vh);
+  overflow-y: auto;
+  margin: 10px 0;
+  padding-right: 4px;
+}
+
+.thm-outfit-group {
+  margin-bottom: 12px;
+}
+
+.thm-outfit-group h3 {
+  margin: 0;
+  padding: 6px 8px;
+  border-bottom: 2px solid rgba(117, 40, 32, 0.75);
+  background: rgba(55, 55, 50, 0.12);
+}
+
+.thm-outfit-header,
+.thm-outfit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 64px;
+  gap: 8px;
+  align-items: center;
+}
+
+.thm-outfit-header {
+  padding: 5px 8px;
+  font-weight: 900;
+  background: rgba(35, 35, 31, 0.72);
+  color: #fff;
+}
+
+.thm-outfit-row {
+  min-height: 46px;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(30, 30, 26, 0.14);
+}
+
+.thm-outfit-row:nth-child(even) {
+  background: rgba(35, 35, 31, 0.06);
+}
+
+.thm-outfit-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+}
+
+.thm-outfit-item:hover {
+  box-shadow: inset 0 0 0 1px rgba(117, 40, 32, 0.55);
+}
+
+.thm-outfit-item img {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  object-fit: cover;
+  border: 1px solid #222;
+}
+
+.thm-outfit-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thm-outfit-price {
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.thm-outfit-qty {
+  width: 58px;
+  text-align: center;
+}
+
+.thm-outfit-footer {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-top: 10px;
+  border-top: 1px solid rgba(30, 30, 26, 0.35);
+}
+
+.thm-outfit-footer button {
+  grid-column: 1 / -1;
+  min-height: 42px;
+  font-weight: 900;
+}
+
 @media (max-width: 680px) {
   .thm-h4h-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thm-shipyard-services {
+    grid-template-columns: 1fr;
+  }
+
+  .thm-outfit-header,
+  .thm-outfit-row {
+    grid-template-columns: minmax(0, 1fr) 92px 56px;
+  }
+
+  .thm-outfit-footer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thm-outfit-trade-row {
+    grid-template-columns: 26px 34px minmax(0, 1fr);
+  }
+
+  .thm-outfit-trade-row small {
+    grid-column: 3;
+    white-space: normal;
   }
 }
