@@ -25,7 +25,7 @@ game.tradehub.DockingPage.showDockingPage();
 
 The module also ships with a macro compendium named **TradeHub Markets Macros**.
 
-The GM floating bar provides quick buttons for Docking, Market, Banking, and Settings. Banking edits TradeHub's internal capital directly and can optionally record a player withdrawal to a player-owned actor.
+The GM floating bar provides quick buttons for Docking, contacts, systems, Market, Heroes for Hire, character statuses, fines, Banking, and Settings. Vessel market and cargo controls live directly on supported vehicle sheets.
 
 ## Data Model
 

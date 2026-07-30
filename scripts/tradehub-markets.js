@@ -3880,23 +3880,21 @@ class GmBar {
 	    bar.innerHTML = `<strong>TradeHub</strong>
 	      <button title="Dock"><i class="fas fa-crosshairs"></i></button>
 	      <button title="Meet NPC"><i class="fas fa-user"></i></button>
-	      <button title="Meet System"><i class="fas fa-globe"></i></button>
-	      <button title="Market"><i class="fas fa-list"></i></button>
-	      <button title="Heroes for Hire"><i class="fas fa-users"></i></button>
-	      <button title="Ship Tools"><i class="fas fa-rocket"></i></button>
-	      <button title="Character Status"><i class="fas fa-skull-crossbones"></i></button>
-	      <button title="Fines"><i class="fas fa-ticket-alt"></i></button>
-	      <button title="Banking"><i class="fas fa-wallet"></i></button>
-	      <button title="Settings"><i class="fas fa-cog"></i></button>`;
-	    document.body.appendChild(bar);
-	    const [dock, meetNpc, meetSystem, market, heroes, tools, damage, fines, bank, config] = bar.querySelectorAll("button");
-	    dock.addEventListener("click", () => DockingPage.showDockingPage());
-	    meetNpc.addEventListener("click", () => MeetNpcPage.show());
-	    meetSystem.addEventListener("click", () => MeetSystemPage.show());
-	    market.addEventListener("click", () => SplashPage.showSplash());
-	    heroes.addEventListener("click", () => HeroesForHirePage.show());
-	    tools.addEventListener("click", () => ShipToolsPage.show());
-	    damage.addEventListener("click", () => CharacterStatusPage.show());
+		      <button title="Meet System"><i class="fas fa-globe"></i></button>
+		      <button title="Market"><i class="fas fa-list"></i></button>
+		      <button title="Heroes for Hire"><i class="fas fa-users"></i></button>
+		      <button title="Character Status"><i class="fas fa-skull-crossbones"></i></button>
+		      <button title="Fines"><i class="fas fa-ticket-alt"></i></button>
+		      <button title="Banking"><i class="fas fa-wallet"></i></button>
+		      <button title="Settings"><i class="fas fa-cog"></i></button>`;
+		    document.body.appendChild(bar);
+		    const [dock, meetNpc, meetSystem, market, heroes, damage, fines, bank, config] = bar.querySelectorAll("button");
+		    dock.addEventListener("click", () => DockingPage.showDockingPage());
+		    meetNpc.addEventListener("click", () => MeetNpcPage.show());
+		    meetSystem.addEventListener("click", () => MeetSystemPage.show());
+		    market.addEventListener("click", () => SplashPage.showSplash());
+		    heroes.addEventListener("click", () => HeroesForHirePage.show());
+		    damage.addEventListener("click", () => CharacterStatusPage.show());
 	    fines.addEventListener("click", () => FinesPage.show());
 	    bank.addEventListener("click", () => BankingPage.show());
 	    config.addEventListener("click", () => ConfigPage.show());
