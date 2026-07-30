@@ -1265,6 +1265,28 @@
   font-weight: 700;
 }
 
+.thm-outfit-family {
+  margin: 3px 6px;
+  border: 1px solid rgba(30, 30, 26, 0.16);
+}
+
+.thm-outfit-family > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  background: rgba(55, 55, 50, 0.08);
+  font-size: 0.95em;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.thm-outfit-family > summary span {
+  color: rgba(30, 30, 26, 0.6);
+  font-size: 0.8em;
+  font-weight: 700;
+}
+
 .thm-outfit-header,
 .thm-outfit-row {
   display: grid;
@@ -1275,9 +1297,18 @@
 
 .thm-outfit-header {
   padding: 5px 8px;
+  font-size: 0.82em;
   font-weight: 900;
   background: rgba(35, 35, 31, 0.72);
   color: #fff;
+}
+
+.thm-outfit-header span:first-child {
+  text-align: center;
+}
+
+.thm-outfit-header span:last-child {
+  text-align: right;
 }
 
 .thm-outfit-row {
@@ -1316,10 +1347,34 @@
   border: 1px solid #222;
 }
 
-.thm-outfit-item span {
+.thm-outfit-item-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.thm-outfit-item-name {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.thm-outfit-weapon-details {
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  color: rgba(30, 30, 26, 0.72);
+  font-size: 0.72em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thm-outfit-weapon-details span {
+  padding: 0 3px;
+  color: rgba(117, 40, 32, 0.75);
 }
 
 .thm-outfit-price {

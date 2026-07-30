@@ -42,6 +42,7 @@ const REST_CONSUMABLE_MESSAGES = [
 let selectedShipId = null;
 let selectedShipName = "";
 const openWindows = new Set();
+const pendingGmRequests = new Map();
 
 const clone = value => foundry.utils.deepClone(value);
 const duplicateDoc = doc => doc.toObject ? doc.toObject() : clone(doc);
@@ -693,7 +694,67 @@ async function getShipyardModules() {
     .filter(doc => !isHiddenStoreDocument(doc) && ["equipment", "weapon"].includes(doc.type))
     .filter(doc => pathIncludesFolder(documentFolderPath(doc), folderPath))
     .map(doc => ({ ...itemFromDocument(doc), folderPath: documentFolderPath(doc) || "Unfiled" }))
-    .sort((a, b) => a.folderPath.localeCompare(b.folderPath) || a.name.localeCompare(b.name) || a.price - b.price);
+    .sort((a, b) => a.folderPath.localeCompare(b.folderPath) || compareShipyardModuleNames(a, b) || a.price - b.price);
+}
+
+function shipyardModuleNameParts(module) {
+  const name = String(module?.name || "");
+  const match = name.match(/^(.*?)\s*\[(Prismatic|S|A|B|C|D|E)\]\s*$/i);
+  if (!match) return { base: name, tier: "", rank: 99 };
+  const tier = match[2].toUpperCase();
+  const ranks = { PRISMATIC: 0, S: 1, A: 2, B: 3, C: 4, D: 5, E: 6 };
+  return { base: match[1].trim(), tier, rank: ranks[tier] };
+}
+
+function compareShipyardModuleNames(a, b) {
+  const left = shipyardModuleNameParts(a);
+  const right = shipyardModuleNameParts(b);
+  return left.base.localeCompare(right.base) || left.rank - right.rank || String(a.name).localeCompare(String(b.name));
+}
+
+function shipyardWeaponDetails(row) {
+  if (row.type !== "weapon") return "";
+  const system = row.system || {};
+  const range = system.range || {};
+  const units = range.units ? ` ${range.units}` : "";
+  const shortRange = range.value ?? range.normal ?? "-";
+  const longRange = range.long ?? "-";
+  const shortText = shortRange === "-" ? "-" : `${shortRange}${units}`;
+  const longText = longRange === "-" ? "-" : `${longRange}${units}`;
+  const damageParts = Array.isArray(system.damage?.parts) ? system.damage.parts : [];
+  const damage = damageParts.map(part => {
+    if (Array.isArray(part)) return `${part[0] || "-"}${part[1] ? ` ${part[1]}` : ""}`;
+    return `${part?.formula || part?.value || "-"}${part?.type ? ` ${part.type}` : ""}`;
+  }).filter(Boolean).join(", ") || system.damage?.formula || system.damage?.base?.formula || "-";
+  return `<small class="thm-outfit-weapon-details"><b>Damage:</b> ${escapeHtml(damage)} <span>|</span> <b>Short:</b> ${escapeHtml(shortText)} <span>|</span> <b>Long:</b> ${escapeHtml(longText)}</small>`;
+}
+
+function shipyardOutfitRow(row) {
+  return `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}" data-module-type="${row.type}">
+    <input class="thm-outfit-purchase" type="checkbox" aria-label="Purchase ${escapeHtml(row.name)}">
+    <button type="button" class="thm-outfit-item" data-open-item="${row.uuid}">
+      <img src="${row.img}"><span class="thm-outfit-item-copy"><span class="thm-outfit-item-name">${escapeHtml(row.name)}</span>${shipyardWeaponDetails(row)}</span>
+    </button>
+    <span class="thm-outfit-price">${formatGp(row.price)}</span>
+  </div>`;
+}
+
+function shipyardOutfitRows(rows) {
+  const families = new Map();
+  for (const row of rows) {
+    const parts = shipyardModuleNameParts(row);
+    const key = parts.tier ? parts.base.toLowerCase() : `uuid:${row.uuid}`;
+    if (!families.has(key)) families.set(key, { base: parts.base, rows: [] });
+    families.get(key).rows.push(row);
+  }
+  return [...families.values()].map(family => {
+    family.rows.sort(compareShipyardModuleNames);
+    if (family.rows.length === 1) return shipyardOutfitRow(family.rows[0]);
+    return `<details class="thm-outfit-family">
+      <summary>${escapeHtml(family.base)} <span>${family.rows.length} classes</span></summary>
+      ${family.rows.map(shipyardOutfitRow).join("")}
+    </details>`;
+  }).join("");
 }
 
 function itemFromDocument(doc) {
@@ -1023,6 +1084,7 @@ async function updateBank(gp) {
   data.capital = Math.max(0, Number(gp || 0));
   syncShipDirectory(data);
   await setSetting("data", data);
+  refreshVehicleSheetCapital();
 }
 
 function accessibleShips() {
@@ -1165,6 +1227,7 @@ function refreshOpenWindows() {
   for (const app of [...openWindows]) {
     if (app.rendered) app.render(false);
   }
+  refreshVehicleSheetCapital();
   SplashPage.refreshSplash();
 }
 
@@ -1173,15 +1236,52 @@ function broadcastRefresh(openSplash = false) {
   refreshOpenWindows();
 }
 
-function requestGm(action, payload) {
-  if (game.user.isGM) return processGmRequest({ action, payload, userId: game.user.id });
+function requestGm(action, payload, { awaitResponse = false } = {}) {
+  if (game.user.isGM) return processGmRequest({ action, payload, userId: game.user.id }, { rethrow: awaitResponse });
+  if (awaitResponse) {
+    const requestId = foundry.utils.randomID();
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        pendingGmRequests.delete(requestId);
+        reject(new Error("The GM did not complete the TradeHub request in time."));
+      }, 30000);
+      pendingGmRequests.set(requestId, {
+        resolve: value => {
+          window.clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: error => {
+          window.clearTimeout(timeout);
+          reject(error);
+        }
+      });
+      game.socket.emit(SOCKET, { type: "request", action, payload, userId: game.user.id, requestId });
+    });
+  }
   game.socket.emit(SOCKET, { type: "request", action, payload, userId: game.user.id });
   ui.notifications.info("TradeHub request sent to the GM client.");
   return true;
 }
 
 async function handleSocket(message) {
-  if (message.type === "request" && game.user.isGM) return processGmRequest(message);
+  if (message.type === "request" && game.user.isGM) {
+    if (!message.requestId) return processGmRequest(message);
+    try {
+      await processGmRequest(message, { rethrow: true });
+      game.socket.emit(SOCKET, { type: "response", requestId: message.requestId, userId: message.userId, success: true });
+    } catch (error) {
+      game.socket.emit(SOCKET, { type: "response", requestId: message.requestId, userId: message.userId, success: false, error: error.message || "TradeHub transaction failed." });
+    }
+    return;
+  }
+  if (message.type === "response" && message.userId === game.user.id) {
+    const pending = pendingGmRequests.get(message.requestId);
+    if (!pending) return;
+    pendingGmRequests.delete(message.requestId);
+    if (message.success) pending.resolve(true);
+    else pending.reject(new Error(message.error || "TradeHub transaction failed."));
+    return;
+  }
   if (message.type === "refresh") {
     refreshOpenWindows();
     if (message.openSplash) SplashPage.showSplash();
@@ -1189,7 +1289,7 @@ async function handleSocket(message) {
   if (message.type === "warezGlitch") playWarezHackEffects();
 }
 
-async function processGmRequest(message) {
+async function processGmRequest(message, { rethrow = false } = {}) {
   try {
     if (message.action === "buyGoods") return Transactions.buyGoods(message.payload, message.userId);
     if (message.action === "sellGoods") return Transactions.sellGoods(message.payload, message.userId);
@@ -1206,6 +1306,7 @@ async function processGmRequest(message) {
   } catch (err) {
     console.error(err);
     ui.notifications.error(err.message || "TradeHub transaction failed.");
+    if (rethrow) throw err;
   }
 }
 
@@ -2132,14 +2233,8 @@ class ShipOutfittingPage {
     const shipOptions = ships.map(ship => `<option value="${ship.id}" ${ship.id === selectedShipId ? "selected" : ""}>${escapeHtml(ship.name)}</option>`).join("");
     const sections = [...groups.entries()].map(([folder, rows]) => `<details class="thm-outfit-group">
       <summary>${escapeHtml(folder)} <span>${rows.length} module${rows.length === 1 ? "" : "s"}</span></summary>
-      <div class="thm-outfit-header"><span aria-hidden="true"></span><span>Module</span><span>Price</span></div>
-      ${rows.map(row => `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}" data-module-type="${row.type}">
-        <input class="thm-outfit-purchase" type="checkbox" aria-label="Purchase ${escapeHtml(row.name)}">
-        <button type="button" class="thm-outfit-item" data-open-item="${row.uuid}">
-          <img src="${row.img}"><span>${escapeHtml(row.name)}</span>
-        </button>
-        <span class="thm-outfit-price">${formatGp(row.price)}</span>
-      </div>`).join("")}
+      <div class="thm-outfit-header"><span>Qty</span><span aria-hidden="true"></span><span>Price</span></div>
+      ${shipyardOutfitRows(rows)}
     </details>`).join("");
     const content = `<div class="thm-root thm-outfitting">
       <div class="thm-outfit-summary">
@@ -2247,13 +2342,21 @@ class ShipOutfittingPage {
         });
         html.find("[data-open-item]").on("click", async ev => (await fromUuid(ev.currentTarget.dataset.openItem))?.sheet?.render(true));
         html.find("#thm-outfit-buy").on("click", async () => {
+          const button = html.find("#thm-outfit-buy");
           const items = html.find(".thm-outfit-row").toArray()
             .filter(element => $(element).find(".thm-outfit-purchase").prop("checked"))
             .map(element => ({ uuid: element.dataset.uuid, quantity: 1 }));
           const tradeModuleIds = selectedTradeIds();
           if (!items.length && !tradeModuleIds.length) return;
-          await requestGm("outfitShip", { shipId: html.find("#thm-outfit-ship").val(), items, tradeModuleIds });
-          dialog.close();
+          button.prop("disabled", true).html('<i class="fas fa-spinner fa-spin"></i> Completing Outfitting');
+          try {
+            await requestGm("outfitShip", { shipId: html.find("#thm-outfit-ship").val(), items, tradeModuleIds }, { awaitResponse: true });
+            await dialog.close();
+          } catch (error) {
+            ui.notifications.error(error.message || "Ship Outfitting could not be completed.");
+            button.html('<i class="fas fa-exchange-alt"></i> Complete Outfitting');
+            recalc();
+          }
         });
         renderTradeIns();
         recalc();
@@ -2591,6 +2694,10 @@ function vehicleSheetToolsHtml(_actor) {
     ${marketButton}
     <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
   </div>`;
+}
+
+function refreshVehicleSheetCapital() {
+  $(".thm-sheet-shiptools-capital").text(`TradeHub Capital: ${formatGp(bankBalance())}`);
 }
 
 function findConditionImmunityInsertion(root) {
@@ -4296,6 +4403,8 @@ class Transactions {
         const itemData = duplicateDoc(source);
         delete itemData._id;
         if (foundry.utils.hasProperty(itemData, "system.quantity")) foundry.utils.setProperty(itemData, "system.quantity", 1);
+        foundry.utils.setProperty(itemData, "system.equipped", true);
+        foundry.utils.setProperty(itemData, `flags.${MODULE_ID}.destroyedUnequipped`, false);
         createData.push(itemData);
       }
     }
@@ -4311,13 +4420,14 @@ class Transactions {
     }
     await updateBank(bankBalance() - netCost);
     const purchases = requested.map(entry => `${escapeHtml(entry.module.name)} x ${entry.quantity} @ ${formatGp(entry.module.price)}`).join("<br>") || "None";
+    const online = created.map(item => escapeHtml(item.name)).join("<br>") || "None";
     const traded = installedModules
       .filter(item => selectedTradeIds.includes(item.id))
       .map(item => `${escapeHtml(item.name)}: ${formatGp(Math.floor(shipyardEquipmentValue(item) * 0.75))} credit`)
       .join("<br>") || "None";
     await ChatMessage.create({
       user: userId,
-      content: `<strong>Ship Outfitting Complete</strong><br><strong>${escapeHtml(ship.name)}</strong><br><br><strong>Modules Purchased:</strong><br>${purchases}<br><br><strong>Modules Traded In:</strong><br>${traded}${cargoItems.length ? `<br><br><strong class="thm-red">Cargo discarded:</strong> ${cargoItems.map(item => escapeHtml(item.name)).join(", ")}` : ""}<br><br><strong>Purchase Total:</strong> ${formatGp(purchaseTotal)}<br><strong>Trade-In Credit:</strong> ${formatGp(tradeCredit)}<br><strong>${netCost < 0 ? "Credit Received" : "Net Cost"}:</strong> ${formatGp(Math.abs(netCost))}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
+      content: `<strong>Ship Outfitting Complete</strong><br><strong>${escapeHtml(ship.name)}</strong><br><br><strong>Systems Online:</strong><br>${online}<br><br><strong>Modules Purchased:</strong><br>${purchases}<br><br><strong>Modules Traded In:</strong><br>${traded}${cargoItems.length ? `<br><br><strong class="thm-red">Cargo discarded:</strong> ${cargoItems.map(item => escapeHtml(item.name)).join(", ")}` : ""}<br><br><strong>Purchase Total:</strong> ${formatGp(purchaseTotal)}<br><strong>Trade-In Credit:</strong> ${formatGp(tradeCredit)}<br><strong>${netCost < 0 ? "Credit Received" : "Net Cost"}:</strong> ${formatGp(Math.abs(netCost))}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
     });
     const data = getData();
     syncShipDirectory(data);
