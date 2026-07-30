@@ -768,38 +768,21 @@
 }
 
 .thm-shipyard-equipment-picker {
-  position: relative;
   width: 154px;
   max-width: 46%;
   flex: 0 0 auto;
-}
-
-.thm-shipyard-equipment-picker summary {
-  min-height: 30px;
-  box-sizing: border-box;
-  border: 1px solid rgba(80, 80, 72, 0.45);
-  background: rgba(255, 255, 245, 0.42);
+  min-height: 32px;
   padding: 5px 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  cursor: pointer;
   font-weight: 800;
-  list-style: none;
 }
 
-.thm-shipyard-equipment-picker summary::-webkit-details-marker {
-  display: none;
-}
-
-.thm-shipyard-equipment-picker.disabled summary {
+.thm-shipyard-equipment-picker.disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.thm-shipyard-equipment-picker[open] summary i {
-  transform: rotate(180deg);
 }
 
 .thm-equipment-options {
@@ -814,6 +797,23 @@
   background: #eeece2;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
   padding: 5px;
+}
+
+.thm-equipment-picker-dialog > p {
+  margin: 0 0 10px;
+  text-align: center;
+}
+
+.thm-equipment-picker-dialog .thm-equipment-options {
+  position: static;
+  width: 100%;
+  max-height: min(420px, 56vh);
+  box-sizing: border-box;
+  box-shadow: none;
+}
+
+.thm-equipment-picker-dialog .thm-cargo-bay-warning {
+  margin-top: 10px;
 }
 
 .thm-cargo-bay-warning {
@@ -1239,19 +1239,36 @@
 
 .thm-outfit-group {
   margin-bottom: 12px;
+  border: 1px solid rgba(30, 30, 26, 0.2);
 }
 
-.thm-outfit-group h3 {
-  margin: 0;
-  padding: 6px 8px;
+.thm-outfit-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
   border-bottom: 2px solid rgba(117, 40, 32, 0.75);
   background: rgba(55, 55, 50, 0.12);
+  font-size: 1.1em;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.thm-outfit-group:not([open]) > summary {
+  border-bottom: 0;
+}
+
+.thm-outfit-group > summary span {
+  color: rgba(30, 30, 26, 0.65);
+  font-size: 0.78em;
+  font-weight: 700;
 }
 
 .thm-outfit-header,
 .thm-outfit-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 120px 64px;
+  grid-template-columns: 34px minmax(0, 1fr) 120px;
   gap: 8px;
   align-items: center;
 }
@@ -1310,9 +1327,10 @@
   white-space: nowrap;
 }
 
-.thm-outfit-qty {
-  width: 58px;
-  text-align: center;
+.thm-outfit-purchase {
+  width: 22px;
+  height: 22px;
+  margin: 0 auto;
 }
 
 .thm-outfit-footer {
@@ -1338,7 +1356,7 @@
 
   .thm-outfit-header,
   .thm-outfit-row {
-    grid-template-columns: minmax(0, 1fr) 92px 56px;
+    grid-template-columns: 30px minmax(0, 1fr) 92px;
   }
 
   .thm-outfit-footer {

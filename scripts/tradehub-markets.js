@@ -2130,17 +2130,17 @@ class ShipOutfittingPage {
       groups.get(module.folderPath).push(module);
     }
     const shipOptions = ships.map(ship => `<option value="${ship.id}" ${ship.id === selectedShipId ? "selected" : ""}>${escapeHtml(ship.name)}</option>`).join("");
-    const sections = [...groups.entries()].map(([folder, rows]) => `<section class="thm-outfit-group">
-      <h3>${escapeHtml(folder)}</h3>
-      <div class="thm-outfit-header"><span>Module</span><span>Price</span><span>Qty</span></div>
-      ${rows.map(row => `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}">
+    const sections = [...groups.entries()].map(([folder, rows]) => `<details class="thm-outfit-group">
+      <summary>${escapeHtml(folder)} <span>${rows.length} module${rows.length === 1 ? "" : "s"}</span></summary>
+      <div class="thm-outfit-header"><span aria-hidden="true"></span><span>Module</span><span>Price</span></div>
+      ${rows.map(row => `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}" data-module-type="${row.type}">
+        <input class="thm-outfit-purchase" type="checkbox" aria-label="Purchase ${escapeHtml(row.name)}">
         <button type="button" class="thm-outfit-item" data-open-item="${row.uuid}">
           <img src="${row.img}"><span>${escapeHtml(row.name)}</span>
         </button>
         <span class="thm-outfit-price">${formatGp(row.price)}</span>
-        <input class="thm-outfit-qty" type="text" inputmode="numeric" value="0" aria-label="${escapeHtml(row.name)} quantity">
       </div>`).join("")}
-    </section>`).join("");
+    </details>`).join("");
     const content = `<div class="thm-root thm-outfitting">
       <div class="thm-outfit-summary">
         <label><b>Outfit Craft</b><select id="thm-outfit-ship">${shipOptions}</select></label>
@@ -2182,21 +2182,41 @@ class ShipOutfittingPage {
             </label>`;
           }).join("") : `<div class="thm-equipment-empty">No installed equipment or weapons available to trade.</div>`);
         };
-        const recalc = () => {
+        const enforceCapacity = (changedInput = null, notify = false) => {
+          const ship = game.actors.get(html.find("#thm-outfit-ship").val());
+          const capacity = shipyardModuleCapacity(ship);
+          if (!capacity) return true;
+          const traded = new Set(selectedTradeIds());
+          const retained = shipyardEquipmentItems(ship).filter(item => !traded.has(item.id));
+          let equipment = retained.filter(item => item.type === "equipment").reduce((sum, item) => sum + shipyardModuleSlotCount(item), 0);
+          let weapons = retained.filter(item => item.type === "weapon").reduce((sum, item) => sum + shipyardModuleSlotCount(item), 0);
+          for (const element of html.find(".thm-outfit-row").toArray()) {
+            const row = $(element);
+            if (!row.find(".thm-outfit-purchase").prop("checked")) continue;
+            if (row.data("moduleType") === "weapon") weapons += 1;
+            else equipment += 1;
+          }
+          if (equipment <= capacity.equipment && weapons <= capacity.weapon) return true;
+          if (changedInput) $(changedInput).prop("checked", false);
+          if (notify) ui.notifications.error(`You cannot buy this module, as your vehicle only supports ${capacity.label} Modules`);
+          return false;
+        };
+        const recalc = (changedInput = null, notifyCapacity = false) => {
+          enforceCapacity(changedInput, notifyCapacity);
           const credit = tradeCredit();
           let remaining = bankBalance() + credit;
           let total = 0;
           html.find(".thm-outfit-row").each((_i, element) => {
             const row = $(element);
             const price = Math.max(0, Number(row.data("price") || 0));
-            const input = row.find(".thm-outfit-qty");
-            let qty = Math.max(0, Math.floor(Number(input.val()) || 0));
-            const affordable = price > 0 ? Math.floor(remaining / price) : qty;
-            qty = Math.min(qty, affordable);
-            input.val(qty);
-            const cost = qty * price;
-            total += cost;
-            remaining -= cost;
+            const input = row.find(".thm-outfit-purchase");
+            if (!input.prop("checked")) return;
+            if (price > remaining) {
+              input.prop("checked", false);
+              return;
+            }
+            total += price;
+            remaining -= price;
           });
           const net = total - credit;
           html.find("#thm-outfit-total").text(formatGp(total));
@@ -2205,22 +2225,31 @@ class ShipOutfittingPage {
           html.find("#thm-outfit-net").text(net < 0 ? `${formatGp(Math.abs(net))} received` : `${formatGp(net)} due`);
           html.find("#thm-outfit-after").text(formatGp(bankBalance() - net));
           html.find("#thm-outfit-cargo-warning").prop("hidden", html.find(".thm-outfit-trade-item:checked[data-cargo-bay='true']").length === 0);
-          html.find("#thm-outfit-buy").prop("disabled", total <= 0 && credit <= 0);
+          const hasPurchases = html.find(".thm-outfit-purchase:checked").length > 0;
+          html.find("#thm-outfit-buy").prop("disabled", !hasPurchases && credit <= 0);
         };
         html.find("#thm-outfit-ship").on("change", ev => {
           selectedShipId = ev.currentTarget.value;
           selectedShipName = selectedShip()?.name || "";
+          html.find(".thm-outfit-purchase").prop("checked", false);
           renderTradeIns();
           recalc();
         });
-        html.find(".thm-outfit-qty").on("input change", recalc);
-        html.find("#thm-outfit-trade-items").on("change", ".thm-outfit-trade-item", recalc);
+        html.find(".thm-outfit-purchase").on("change", ev => recalc(ev.currentTarget, ev.currentTarget.checked));
+        html.find("#thm-outfit-trade-items").on("change", ".thm-outfit-trade-item", ev => {
+          const input = ev.currentTarget;
+          if (!input.checked && !enforceCapacity()) {
+            input.checked = true;
+            const capacity = shipyardModuleCapacity(game.actors.get(html.find("#thm-outfit-ship").val()));
+            ui.notifications.error(`You cannot remove this trade-in while purchasing these modules, as your vehicle only supports ${capacity.label} Modules`);
+          }
+          recalc();
+        });
         html.find("[data-open-item]").on("click", async ev => (await fromUuid(ev.currentTarget.dataset.openItem))?.sheet?.render(true));
         html.find("#thm-outfit-buy").on("click", async () => {
-          const items = html.find(".thm-outfit-row").toArray().map(element => ({
-            uuid: element.dataset.uuid,
-            quantity: Math.max(0, Math.floor(Number($(element).find(".thm-outfit-qty").val()) || 0))
-          })).filter(entry => entry.quantity > 0);
+          const items = html.find(".thm-outfit-row").toArray()
+            .filter(element => $(element).find(".thm-outfit-purchase").prop("checked"))
+            .map(element => ({ uuid: element.dataset.uuid, quantity: 1 }));
           const tradeModuleIds = selectedTradeIds();
           if (!items.length && !tradeModuleIds.length) return;
           await requestGm("outfitShip", { shipId: html.find("#thm-outfit-ship").val(), items, tradeModuleIds });
@@ -2278,12 +2307,9 @@ class ShipyardPage {
             <select id="owned">${ownedOptions}</select>
             <label class="thm-check-line"><input type="checkbox" id="trade-ship"> Sell Selected ${vehicleLabel}</label>
             <div class="thm-shipyard-option-box">
-              <div class="thm-shipyard-equipment-control">
-                <label class="thm-check-line"><input type="checkbox" id="trade-modules"> Sell Equipment</label>
-	                <details class="thm-shipyard-equipment-picker">
-	                  <summary><span class="thm-equipment-summary">Choose Equipment</span><i class="fas fa-chevron-down"></i></summary>
-	                  <div class="thm-equipment-options">${shipyardEquipmentOptions(initialOwned)}</div>
-	                </details>
+	              <div class="thm-shipyard-equipment-control">
+	                <label class="thm-check-line"><input type="checkbox" id="trade-modules"> Sell Equipment</label>
+	                <button type="button" class="thm-shipyard-equipment-picker"><span class="thm-equipment-summary">Choose Equipment</span><i class="fas fa-list-check"></i></button>
 	              </div>
 	              <div class="thm-cargo-bay-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
 	              <label class="thm-check-line"><input type="checkbox" id="transfer-modules"> Transfer Equipment to New ${vehicleLabel}</label>
@@ -2305,18 +2331,21 @@ class ShipyardPage {
   }
 
   static activate(html, { doc, price, dialog }) {
-    const selectedModuleIds = () => html.find(".thm-equipment-item:checked").map((_i, input) => input.value).get();
+    const moduleSelections = new Set();
+    const selectedModuleIds = () => [...moduleSelections];
     const refreshEquipmentPicker = ({ selectAll = false } = {}) => {
       const ownedShip = game.actors.get(html.find("#owned").val());
-      html.find(".thm-equipment-options").html(shipyardEquipmentOptions(ownedShip, { checked: selectAll }));
+      moduleSelections.clear();
+      if (selectAll) for (const item of shipyardEquipmentItems(ownedShip)) moduleSelections.add(item.id);
       updateEquipmentSummary();
     };
     const updateEquipmentSummary = () => {
-      const total = html.find(".thm-equipment-item").length;
-      const selected = html.find(".thm-equipment-item:checked").length;
+      const items = shipyardEquipmentItems(game.actors.get(html.find("#owned").val()));
+      const total = items.length;
+      const selected = items.filter(item => moduleSelections.has(item.id)).length;
       html.find(".thm-equipment-summary").text(total ? `${selected} of ${total} Selected` : "No Equipment");
       html.find(".thm-shipyard-equipment-picker").toggleClass("disabled", !total);
-      const cargoBaySelected = html.find(".thm-equipment-item:checked[data-cargo-bay='true']").length > 0;
+      const cargoBaySelected = items.some(item => moduleSelections.has(item.id) && isCargoBayModule(item));
       html.find(".thm-cargo-bay-warning").prop("hidden", !cargoBaySelected);
     };
     const calc = () => {
@@ -2342,41 +2371,74 @@ class ShipyardPage {
       calc();
     });
     html.find("#trade-ship").on("change", calc);
-    html.find(".thm-equipment-options").on("change", ".thm-equipment-item", () => {
-      const anySelected = html.find(".thm-equipment-item:checked").length > 0;
-      html.find("#trade-modules").prop("checked", anySelected);
-      if (anySelected) html.find("#transfer-modules").prop("checked", false);
-      calc();
+    html.find(".thm-shipyard-equipment-picker").on("click", () => {
+      const ownedShip = game.actors.get(html.find("#owned").val());
+      const items = shipyardEquipmentItems(ownedShip);
+      if (!items.length) return;
+      const optionRows = shipyardEquipmentOptions(ownedShip, { selectedIds: moduleSelections });
+      const pickerDialog = new Dialog({
+        title: "Select Equipment to Sell",
+        content: `<div class="thm-root thm-equipment-picker-dialog">
+          <p>Choose the installed modules included in this transaction. Trade credit is 75% of listed value.</p>
+          <div class="thm-equipment-options">${optionRows}</div>
+          <div class="thm-cargo-bay-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
+        </div>`,
+        buttons: {
+          apply: {
+            icon: `<i class="fas fa-check"></i>`,
+            label: "Apply Selection",
+            callback: pickerHtml => {
+              moduleSelections.clear();
+              pickerHtml.find(".thm-equipment-item:checked").each((_i, input) => moduleSelections.add(input.value));
+              const anySelected = moduleSelections.size > 0;
+              html.find("#trade-modules").prop("checked", anySelected);
+              if (anySelected) html.find("#transfer-modules").prop("checked", false);
+              calc();
+            }
+          },
+          cancel: { label: "Cancel" }
+        },
+        default: "apply",
+        render: pickerHtml => {
+          const updateWarning = () => {
+            const selectedCargoBay = pickerHtml.find(".thm-equipment-item:checked[data-cargo-bay='true']").length > 0;
+            pickerHtml.find(".thm-cargo-bay-warning").prop("hidden", !selectedCargoBay);
+          };
+          pickerHtml.find(".thm-equipment-item").on("change", updateWarning);
+          updateWarning();
+          const closeOnOutsideClick = event => {
+            const element = pickerDialog.element?.[0];
+            if (!pickerDialog.rendered || !element?.isConnected) {
+              document.removeEventListener("pointerdown", closeOnOutsideClick, true);
+              return;
+            }
+            if (!element.contains(event.target)) {
+              event.preventDefault();
+              event.stopPropagation();
+              pickerDialog.close();
+            }
+          };
+          window.setTimeout(() => document.addEventListener("pointerdown", closeOnOutsideClick, true), 0);
+        }
+      }, { ...dialogOptions(), width: 520 });
+      pickerDialog.render(true);
     });
-    html.find(".thm-shipyard-equipment-picker").on("toggle", ev => {
-      if ($(ev.currentTarget).hasClass("disabled")) ev.currentTarget.open = false;
-    });
-    const picker = html.find(".thm-shipyard-equipment-picker")[0];
-    const closePickerOnOutsideClick = event => {
-      if (!picker?.isConnected) {
-        document.removeEventListener("pointerdown", closePickerOnOutsideClick, true);
-        return;
-      }
-      if (picker.open && !picker.contains(event.target)) picker.open = false;
-    };
-    document.addEventListener("pointerdown", closePickerOnOutsideClick, true);
     html.find(".thm-shipyard-art img").on("click", ev => new ImagePopout(ev.currentTarget.dataset.img, { title: ev.currentTarget.dataset.title, shareable: true }).render(true));
     html.find("#trade-modules").on("change", () => {
       const checked = html.find("#trade-modules").prop("checked");
       if (checked) {
         html.find("#transfer-modules").prop("checked", false);
-        html.find(".thm-equipment-item").prop("checked", true);
+        moduleSelections.clear();
+        for (const item of shipyardEquipmentItems(game.actors.get(html.find("#owned").val()))) moduleSelections.add(item.id);
       } else {
-        html.find(".thm-equipment-item").prop("checked", false);
-        html.find(".thm-shipyard-equipment-picker").prop("open", false);
+        moduleSelections.clear();
       }
       calc();
     });
     html.find("#transfer-modules").on("change", () => {
       if (html.find("#transfer-modules").prop("checked")) {
         html.find("#trade-modules").prop("checked", false);
-        html.find(".thm-equipment-item").prop("checked", false);
-        html.find(".thm-shipyard-equipment-picker").prop("open", false);
+        moduleSelections.clear();
       }
       calc();
     });
@@ -2404,6 +2466,22 @@ function shipyardEquipmentItems(ship) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function shipyardModuleSlotCount(item) {
+  return Math.max(1, Math.floor(Number(item?.system?.quantity || 1)));
+}
+
+function shipyardModuleCapacity(ship) {
+  const label = String(ship?.system?.attributes?.capacity?.creature ?? "").trim();
+  const equipment = label.match(/(\d+)\s*Equipment/i);
+  const weapon = label.match(/(\d+)\s*Weapon/i);
+  if (!equipment || !weapon) return null;
+  return {
+    equipment: Number(equipment[1]),
+    weapon: Number(weapon[1]),
+    label
+  };
+}
+
 function shipyardEquipmentValue(item) {
   const unitValue = Math.max(0, parseNumber(item?.system?.price?.value ?? item?.system?.price ?? 0));
   const quantity = Math.max(1, Number(item?.system?.quantity || 1));
@@ -2417,7 +2495,7 @@ function shipyardModuleTradeValue(ship, itemIds) {
     .reduce((total, item) => total + Math.floor(shipyardEquipmentValue(item) * 0.75), 0);
 }
 
-function shipyardEquipmentOptions(ship, { checked = false } = {}) {
+function shipyardEquipmentOptions(ship, { checked = false, selectedIds = null } = {}) {
   const items = shipyardEquipmentItems(ship);
   if (!items.length) return `<div class="thm-equipment-empty">No equipment installed.</div>`;
   return items.map(item => {
@@ -2425,8 +2503,9 @@ function shipyardEquipmentOptions(ship, { checked = false } = {}) {
     const credit = Math.floor(value * 0.75);
     const quantity = Math.max(1, Number(item?.system?.quantity || 1));
     const name = quantity > 1 ? `${item.name} x${quantity}` : item.name;
+    const selected = selectedIds ? selectedIds.has(item.id) : checked;
     return `<label class="thm-equipment-option">
-      <input type="checkbox" class="thm-equipment-item" value="${item.id}" data-cargo-bay="${isCargoBayModule(item)}" ${checked ? "checked" : ""}>
+      <input type="checkbox" class="thm-equipment-item" value="${item.id}" data-cargo-bay="${isCargoBayModule(item)}" ${selected ? "checked" : ""}>
       <span class="thm-equipment-option-name">${escapeHtml(name)}</span>
       <span class="thm-equipment-option-value">${formatGp(value)} <small>(${formatGp(credit)} credit)</small></span>
     </label>`;
@@ -4180,11 +4259,12 @@ class Transactions {
     const configured = await getShipyardModules();
     const available = new Map(configured.map(module => [module.uuid, module]));
     const requested = [];
+    const requestedUuids = new Set();
     for (const entry of items || []) {
       const module = available.get(entry.uuid);
-      const quantity = Math.min(20, Math.max(0, Math.floor(Number(entry.quantity) || 0)));
-      if (!module || !quantity) continue;
-      requested.push({ module, quantity });
+      if (!module || requestedUuids.has(entry.uuid)) continue;
+      requestedUuids.add(entry.uuid);
+      requested.push({ module, quantity: 1 });
     }
     const installedModules = shipyardEquipmentItems(ship);
     const validTradeIds = new Set(installedModules.map(item => item.id));
@@ -4192,6 +4272,18 @@ class Transactions {
     const sellsCargoBay = installedModules.some(item => selectedTradeIds.includes(item.id) && isCargoBayModule(item));
     const cargoItems = sellsCargoBay ? Array.from(ship.items).filter(item => ["loot", "consumable"].includes(item.type)) : [];
     if (!requested.length && !selectedTradeIds.length) throw new Error("No modules were selected for purchase or trade-in.");
+    const capacity = shipyardModuleCapacity(ship);
+    if (capacity) {
+      const traded = new Set(selectedTradeIds);
+      const retained = installedModules.filter(item => !traded.has(item.id));
+      const equipment = retained.filter(item => item.type === "equipment").reduce((sum, item) => sum + shipyardModuleSlotCount(item), 0)
+        + requested.filter(entry => entry.module.type === "equipment").reduce((sum, entry) => sum + entry.quantity, 0);
+      const weapons = retained.filter(item => item.type === "weapon").reduce((sum, item) => sum + shipyardModuleSlotCount(item), 0)
+        + requested.filter(entry => entry.module.type === "weapon").reduce((sum, entry) => sum + entry.quantity, 0);
+      if (equipment > capacity.equipment || weapons > capacity.weapon) {
+        throw new Error(`You cannot buy this module, as your vehicle only supports ${capacity.label} Modules`);
+      }
+    }
     const purchaseTotal = requested.reduce((sum, entry) => sum + entry.module.price * entry.quantity, 0);
     const tradeCredit = shipyardModuleTradeValue(ship, selectedTradeIds);
     const netCost = purchaseTotal - tradeCredit;
