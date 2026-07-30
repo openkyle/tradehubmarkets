@@ -61,6 +61,9 @@ If an old **Bank of Holding** actor exists and internal capital is still 0, the 
 - Shipyard equipment sales use an itemized checkbox dropdown, show each module's value and 75% trade credit, and include only selected modules in the transaction.
 - Shipyard Services now branches into the existing craft Shipyard and a compendium-backed Ship Outfitting store, grouped by folder and sorted by module name and price.
 - Ship Outfitting also itemizes installed modules for selective trade-in at the established 75% credit, with purchase cost, trade credit, net transaction, and resulting capital shown before confirmation.
+- Shipyard equipment selectors are compact, dismiss when clicking elsewhere, and warn that selling a Cargo Bay permanently discards all carried loot and consumables.
+- Compendium documents tagged `[Hidden]` are excluded consistently from trade goods, consumables, restock, shipyard craft, and Ship Outfitting inventory.
+- Shipyard Modules support the same settings-based Folder/Subfolder selector as the other compendium storefronts.
 - Quantity fields use typed values plus Clear/Max controls, without extra arrow stepper buttons.
 - Starport Services updates its displayed capital in-place after buy/sell transactions and uses a centered vessel selector layout.
 - Docking uses a Market State dropdown and a Dock / Travel submit button.

@@ -644,24 +644,28 @@ function folderMatches(doc, path) {
 
 async function getTradeGoods() {
   const docs = await getPackDocs(setting("tradeGoodsPack"), setting("tradeGoodsFolderPath"));
-  return docs.filter(doc => ["loot", "consumable", "equipment"].includes(doc.type)).map(itemFromDocument);
+  return docs.filter(doc => !isHiddenStoreDocument(doc) && ["loot", "consumable", "equipment"].includes(doc.type)).map(itemFromDocument);
 }
 
 async function getVehicleConsumables() {
   const docs = await getPackDocs(setting("vehicleConsumablesPack"), setting("vehicleConsumablesFolderPath"));
-  return docs.filter(doc => ["loot", "consumable", "equipment", "weapon"].includes(doc.type)).map(itemFromDocument);
+  return docs.filter(doc => !isHiddenStoreDocument(doc) && ["loot", "consumable", "equipment", "weapon"].includes(doc.type)).map(itemFromDocument);
 }
 
 async function getAmmoRestockItems() {
   const pack = setting("ammoRestockPack") || setting("vehicleConsumablesPack");
   const folder = setting("ammoRestockFolderPath") || setting("vehicleConsumablesFolderPath");
   const docs = await getPackDocs(pack, folder);
-  return docs.filter(doc => ["loot", "consumable", "equipment", "weapon"].includes(doc.type)).map(itemFromDocument);
+  return docs.filter(doc => !isHiddenStoreDocument(doc) && ["loot", "consumable", "equipment", "weapon"].includes(doc.type)).map(itemFromDocument);
 }
 
 async function getShipyardVehicles() {
   const docs = await getPackDocs(setting("shipyardPack"), setting("shipyardFolderPath"));
-  return docs.filter(doc => doc.type === "vehicle");
+  return docs.filter(doc => !isHiddenStoreDocument(doc) && doc.type === "vehicle");
+}
+
+function isHiddenStoreDocument(doc) {
+  return /\[\s*hidden\s*\]/i.test(doc?.name || "");
 }
 
 function documentFolderPath(doc) {
@@ -686,7 +690,7 @@ async function getShipyardModules() {
   const docs = await getPackDocs(packId);
   const folderPath = setting("shipyardModulesFolderPath");
   return docs
-    .filter(doc => ["equipment", "weapon"].includes(doc.type))
+    .filter(doc => !isHiddenStoreDocument(doc) && ["equipment", "weapon"].includes(doc.type))
     .filter(doc => pathIncludesFolder(documentFolderPath(doc), folderPath))
     .map(doc => ({ ...itemFromDocument(doc), folderPath: documentFolderPath(doc) || "Unfiled" }))
     .sort((a, b) => a.folderPath.localeCompare(b.folderPath) || a.name.localeCompare(b.name) || a.price - b.price);
@@ -2088,7 +2092,7 @@ class ShipyardServicesPage {
   static show() {
     const state = serviceState();
     if (!state.shipyard) return ui.notifications.error("The shipyard is not available at this location.");
-    new Dialog({
+    const dialog = new Dialog({
       title: `${state.loc.name} Shipyard Services`,
       content: `<div class="thm-root thm-shipyard-services">
         <button id="thm-open-outfitting"><i class="fas fa-tools"></i><span><b>Ship Outfitting</b><small>Purchase modules for your selected craft.</small></span></button>
@@ -2096,10 +2100,17 @@ class ShipyardServicesPage {
       </div>`,
       buttons: { close: { label: "Close" } },
       render: html => {
-        html.find("#thm-open-outfitting").on("click", () => ShipOutfittingPage.show());
-        html.find("#thm-open-shipyard").on("click", () => ShipyardPage.showShipyardPage());
+        html.find("#thm-open-outfitting").on("click", async () => {
+          await dialog.close();
+          ShipOutfittingPage.show();
+        });
+        html.find("#thm-open-shipyard").on("click", async () => {
+          await dialog.close();
+          ShipyardPage.showShipyardPage();
+        });
       }
-    }, { ...dialogOptions(), width: 520 }).render(true);
+    }, { ...dialogOptions(), width: 520 });
+    dialog.render(true);
   }
 }
 
@@ -2138,6 +2149,7 @@ class ShipOutfittingPage {
       <details class="thm-outfit-trade">
         <summary><b>Trade In Installed Modules</b> <span id="thm-outfit-trade-summary">0 GP credit</span></summary>
         <p>Select only the installed modules to sell. TradeHub credits 75% of each module's listed value.</p>
+        <div class="thm-cargo-bay-warning" id="thm-outfit-cargo-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
         <div id="thm-outfit-trade-items"></div>
       </details>
       <div class="thm-outfit-catalog">${sections}</div>
@@ -2163,7 +2175,7 @@ class ShipOutfittingPage {
             const value = shipyardEquipmentValue(item);
             const credit = Math.floor(value * 0.75);
             return `<label class="thm-outfit-trade-row">
-              <input type="checkbox" class="thm-outfit-trade-item" value="${item.id}">
+              <input type="checkbox" class="thm-outfit-trade-item" value="${item.id}" data-cargo-bay="${isCargoBayModule(item)}">
               <img src="${item.img}">
               <span>${escapeHtml(item.name)}</span>
               <small>Value ${formatGp(value)} | Credit ${formatGp(credit)}</small>
@@ -2192,6 +2204,7 @@ class ShipOutfittingPage {
           html.find("#thm-outfit-trade-summary").text(`${formatGp(credit)} credit`);
           html.find("#thm-outfit-net").text(net < 0 ? `${formatGp(Math.abs(net))} received` : `${formatGp(net)} due`);
           html.find("#thm-outfit-after").text(formatGp(bankBalance() - net));
+          html.find("#thm-outfit-cargo-warning").prop("hidden", html.find(".thm-outfit-trade-item:checked[data-cargo-bay='true']").length === 0);
           html.find("#thm-outfit-buy").prop("disabled", total <= 0 && credit <= 0);
         };
         html.find("#thm-outfit-ship").on("change", ev => {
@@ -2267,12 +2280,13 @@ class ShipyardPage {
             <div class="thm-shipyard-option-box">
               <div class="thm-shipyard-equipment-control">
                 <label class="thm-check-line"><input type="checkbox" id="trade-modules"> Sell Equipment</label>
-                <details class="thm-shipyard-equipment-picker">
-                  <summary><span class="thm-equipment-summary">Choose Equipment</span><i class="fas fa-chevron-down"></i></summary>
-                  <div class="thm-equipment-options">${shipyardEquipmentOptions(initialOwned)}</div>
-                </details>
-              </div>
-              <label class="thm-check-line"><input type="checkbox" id="transfer-modules"> Transfer Equipment to New ${vehicleLabel}</label>
+	                <details class="thm-shipyard-equipment-picker">
+	                  <summary><span class="thm-equipment-summary">Choose Equipment</span><i class="fas fa-chevron-down"></i></summary>
+	                  <div class="thm-equipment-options">${shipyardEquipmentOptions(initialOwned)}</div>
+	                </details>
+	              </div>
+	              <div class="thm-cargo-bay-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
+	              <label class="thm-check-line"><input type="checkbox" id="transfer-modules"> Transfer Equipment to New ${vehicleLabel}</label>
             </div>
             <button id="sell-only" disabled>Sell ${vehicleLabel} without Purchase</button>
           </div>
@@ -2302,6 +2316,8 @@ class ShipyardPage {
       const selected = html.find(".thm-equipment-item:checked").length;
       html.find(".thm-equipment-summary").text(total ? `${selected} of ${total} Selected` : "No Equipment");
       html.find(".thm-shipyard-equipment-picker").toggleClass("disabled", !total);
+      const cargoBaySelected = html.find(".thm-equipment-item:checked[data-cargo-bay='true']").length > 0;
+      html.find(".thm-cargo-bay-warning").prop("hidden", !cargoBaySelected);
     };
     const calc = () => {
       const ownedShip = game.actors.get(html.find("#owned").val());
@@ -2335,6 +2351,15 @@ class ShipyardPage {
     html.find(".thm-shipyard-equipment-picker").on("toggle", ev => {
       if ($(ev.currentTarget).hasClass("disabled")) ev.currentTarget.open = false;
     });
+    const picker = html.find(".thm-shipyard-equipment-picker")[0];
+    const closePickerOnOutsideClick = event => {
+      if (!picker?.isConnected) {
+        document.removeEventListener("pointerdown", closePickerOnOutsideClick, true);
+        return;
+      }
+      if (picker.open && !picker.contains(event.target)) picker.open = false;
+    };
+    document.addEventListener("pointerdown", closePickerOnOutsideClick, true);
     html.find(".thm-shipyard-art img").on("click", ev => new ImagePopout(ev.currentTarget.dataset.img, { title: ev.currentTarget.dataset.title, shareable: true }).render(true));
     html.find("#trade-modules").on("change", () => {
       const checked = html.find("#trade-modules").prop("checked");
@@ -2401,11 +2426,15 @@ function shipyardEquipmentOptions(ship, { checked = false } = {}) {
     const quantity = Math.max(1, Number(item?.system?.quantity || 1));
     const name = quantity > 1 ? `${item.name} x${quantity}` : item.name;
     return `<label class="thm-equipment-option">
-      <input type="checkbox" class="thm-equipment-item" value="${item.id}" ${checked ? "checked" : ""}>
+      <input type="checkbox" class="thm-equipment-item" value="${item.id}" data-cargo-bay="${isCargoBayModule(item)}" ${checked ? "checked" : ""}>
       <span class="thm-equipment-option-name">${escapeHtml(name)}</span>
       <span class="thm-equipment-option-value">${formatGp(value)} <small>(${formatGp(credit)} credit)</small></span>
     </label>`;
   }).join("");
+}
+
+function isCargoBayModule(item) {
+  return /\bcargo\s*bay\b/i.test(item?.name || "");
 }
 
 function itemActorData(doc) {
@@ -4160,6 +4189,8 @@ class Transactions {
     const installedModules = shipyardEquipmentItems(ship);
     const validTradeIds = new Set(installedModules.map(item => item.id));
     const selectedTradeIds = [...new Set(Array.isArray(tradeModuleIds) ? tradeModuleIds : [])].filter(id => validTradeIds.has(id));
+    const sellsCargoBay = installedModules.some(item => selectedTradeIds.includes(item.id) && isCargoBayModule(item));
+    const cargoItems = sellsCargoBay ? Array.from(ship.items).filter(item => ["loot", "consumable"].includes(item.type)) : [];
     if (!requested.length && !selectedTradeIds.length) throw new Error("No modules were selected for purchase or trade-in.");
     const purchaseTotal = requested.reduce((sum, entry) => sum + entry.module.price * entry.quantity, 0);
     const tradeCredit = shipyardModuleTradeValue(ship, selectedTradeIds);
@@ -4180,7 +4211,8 @@ class Transactions {
     let created = [];
     try {
       if (createData.length) created = await ship.createEmbeddedDocuments("Item", createData);
-      if (selectedTradeIds.length) await ship.deleteEmbeddedDocuments("Item", selectedTradeIds);
+      const deleteIds = [...selectedTradeIds, ...cargoItems.map(item => item.id)];
+      if (deleteIds.length) await ship.deleteEmbeddedDocuments("Item", [...new Set(deleteIds)]);
     } catch (error) {
       if (created.length) await ship.deleteEmbeddedDocuments("Item", created.map(item => item.id));
       throw error;
@@ -4193,7 +4225,7 @@ class Transactions {
       .join("<br>") || "None";
     await ChatMessage.create({
       user: userId,
-      content: `<strong>Ship Outfitting Complete</strong><br><strong>${escapeHtml(ship.name)}</strong><br><br><strong>Modules Purchased:</strong><br>${purchases}<br><br><strong>Modules Traded In:</strong><br>${traded}<br><br><strong>Purchase Total:</strong> ${formatGp(purchaseTotal)}<br><strong>Trade-In Credit:</strong> ${formatGp(tradeCredit)}<br><strong>${netCost < 0 ? "Credit Received" : "Net Cost"}:</strong> ${formatGp(Math.abs(netCost))}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
+      content: `<strong>Ship Outfitting Complete</strong><br><strong>${escapeHtml(ship.name)}</strong><br><br><strong>Modules Purchased:</strong><br>${purchases}<br><br><strong>Modules Traded In:</strong><br>${traded}${cargoItems.length ? `<br><br><strong class="thm-red">Cargo discarded:</strong> ${cargoItems.map(item => escapeHtml(item.name)).join(", ")}` : ""}<br><br><strong>Purchase Total:</strong> ${formatGp(purchaseTotal)}<br><strong>Trade-In Credit:</strong> ${formatGp(tradeCredit)}<br><strong>${netCost < 0 ? "Credit Received" : "Net Cost"}:</strong> ${formatGp(Math.abs(netCost))}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}`
     });
     const data = getData();
     syncShipDirectory(data);
@@ -4220,16 +4252,17 @@ class Transactions {
     if (total > bankBalance()) throw new Error("Not enough capital.");
     await updateBank(bankBalance() - total);
     const newShip = await Actor.create(newData);
+    let discardedCargo = [];
     if (selected) {
-      await transferShipItems(selected, newShip, {
+      ({ discardedCargo } = await transferShipItems(selected, newShip, {
         soldModuleIds,
         transferModules: !!payload.transferModules,
         tradeShip: !!payload.tradeShip
-      });
+      }));
     }
     if (selected && payload.tradeShip) await selected.delete();
     const soldNames = availableModules.filter(item => soldModuleIds.includes(item.id)).map(item => escapeHtml(item.name));
-    await ChatMessage.create({ content: `<strong>${game.users.get(userId)?.name || "A player"}</strong> purchased <strong>${newShip.name}</strong>.${soldNames.length ? `<br><strong>Equipment sold:</strong> ${soldNames.join(", ")}` : ""}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}` });
+    await ChatMessage.create({ content: `<strong>${game.users.get(userId)?.name || "A player"}</strong> purchased <strong>${newShip.name}</strong>.${soldNames.length ? `<br><strong>Equipment sold:</strong> ${soldNames.join(", ")}` : ""}${discardedCargo.length ? `<br><strong class="thm-red">Cargo discarded:</strong> ${discardedCargo.map(name => escapeHtml(name)).join(", ")}` : ""}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}` });
     const data = getData();
     syncShipDirectory(data);
     await setSetting("data", data);
@@ -4246,10 +4279,12 @@ class Transactions {
     const hullValue = Math.floor(parseNumber(ship.system?.traits?.dimensions || 0) * 0.75);
     const moduleValue = shipyardModuleTradeValue(ship, soldModuleIds);
     const value = hullValue + moduleValue;
+    const discardsCargo = modules.some(item => soldModuleIds.includes(item.id) && isCargoBayModule(item));
+    const discardedCargo = discardsCargo ? Array.from(ship.items).filter(item => ["loot", "consumable"].includes(item.type)).map(item => item.name) : [];
     await updateBank(bankBalance() + value);
     await ship.delete();
     const soldNames = modules.filter(item => soldModuleIds.includes(item.id)).map(item => escapeHtml(item.name));
-    await ChatMessage.create({ content: `<strong>${game.users.get(userId)?.name || "A player"}</strong> sold <strong>${ship.name}</strong> for ${formatGp(value)}.${soldNames.length ? `<br><strong>Equipment included:</strong> ${soldNames.join(", ")}` : ""}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}` });
+    await ChatMessage.create({ content: `<strong>${game.users.get(userId)?.name || "A player"}</strong> sold <strong>${ship.name}</strong> for ${formatGp(value)}.${soldNames.length ? `<br><strong>Equipment included:</strong> ${soldNames.join(", ")}` : ""}${discardedCargo.length ? `<br><strong class="thm-red">Cargo discarded:</strong> ${discardedCargo.map(name => escapeHtml(name)).join(", ")}` : ""}<br><strong>TradeHub Capital:</strong> ${formatGp(bankBalance())}` });
     const data = getData();
     syncShipDirectory(data);
     await setSetting("data", data);
@@ -4310,13 +4345,20 @@ class Transactions {
 
 async function transferShipItems(oldShip, newShip, { soldModuleIds = [], transferModules = false, tradeShip = false } = {}) {
   const sold = new Set(soldModuleIds);
+  const sellsCargoBay = Array.from(oldShip.items).some(item => sold.has(item.id) && isCargoBayModule(item));
   const moving = [];
   const deleting = [];
+  const discardedCargo = [];
   for (const item of oldShip.items) {
     const isModule = ["equipment", "weapon"].includes(item.type);
     const isCargo = ["loot", "consumable"].includes(item.type);
     if (isModule && sold.has(item.id)) {
       deleting.push(item);
+      continue;
+    }
+    if (isCargo && sellsCargoBay) {
+      deleting.push(item);
+      discardedCargo.push(item.name);
       continue;
     }
     if ((tradeShip && (isModule || isCargo)) || (!tradeShip && transferModules && isModule)) {
@@ -4332,6 +4374,7 @@ async function transferShipItems(oldShip, newShip, { soldModuleIds = [], transfe
       "system.cargo.passengers": clone(oldShip.system?.cargo?.passengers || [])
     });
   }
+  return { discardedCargo };
 }
 
 async function chatReceipt(title, userId, lines, total, balance, footer, actorName = "") {

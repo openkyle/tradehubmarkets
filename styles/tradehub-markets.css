@@ -761,16 +761,17 @@
 }
 
 .thm-shipyard-equipment-control {
-  display: grid;
-  grid-template-columns: auto minmax(180px, 1fr);
-  align-items: start;
+  display: flex;
+  align-items: center;
   gap: 8px;
   position: relative;
 }
 
 .thm-shipyard-equipment-picker {
   position: relative;
-  min-width: 0;
+  width: 154px;
+  max-width: 46%;
+  flex: 0 0 auto;
 }
 
 .thm-shipyard-equipment-picker summary {
@@ -806,13 +807,32 @@
   z-index: 20;
   top: calc(100% + 2px);
   right: 0;
-  width: min(430px, 80vw);
+  width: min(360px, 76vw);
   max-height: 280px;
   overflow-y: auto;
   border: 1px solid rgba(50, 50, 45, 0.7);
   background: #eeece2;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
   padding: 5px;
+}
+
+.thm-cargo-bay-warning {
+  margin: 5px 0 7px;
+  padding: 7px 9px;
+  border: 1px solid #a23a2d;
+  background: rgba(186, 50, 34, 0.12);
+  color: #8c1f16;
+  font-size: 0.88em;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.thm-cargo-bay-warning[hidden] {
+  display: none;
+}
+
+.thm-cargo-bay-warning i {
+  margin-right: 5px;
 }
 
 .thm-equipment-option {
@@ -1108,12 +1128,13 @@
 }
 
 .thm-shipyard-services button {
-  display: flex;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  min-height: 78px;
-  padding: 12px;
-  text-align: left;
+  gap: 16px;
+  min-height: 104px;
+  padding: 20px 22px;
+  text-align: center;
 }
 
 .thm-shipyard-services button > i {
@@ -1124,7 +1145,8 @@
 
 .thm-shipyard-services button span {
   display: grid;
-  gap: 3px;
+  gap: 7px;
+  text-align: center;
 }
 
 .thm-shipyard-services button small {
