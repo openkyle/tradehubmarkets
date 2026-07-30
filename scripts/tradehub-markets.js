@@ -84,6 +84,8 @@ function moduleApi() {
   game.tradehub.updateBank = updateBank;
   game.tradehub.getShipUpkeepPercent = shipUpkeepPercent;
   game.tradehub.calculateShipUpkeep = calculateShipUpkeep;
+  game.tradehub.getGlaxonInsurancePremiumPercent = glaxonInsurancePremiumPercent;
+  game.tradehub.calculateGlaxonInsurancePremium = calculateGlaxonInsurancePremium;
 }
 
 Hooks.once("init", () => {
@@ -531,6 +533,14 @@ function registerSettings() {
     config: false,
     type: Number,
     default: 0.2
+  });
+  register("glaxonInsurancePremiumPercent", {
+    name: "Glaxon Insurance Premium Percentage",
+    hint: "Percentage of a ship's full repair value charged as its Glaxon premium each long rest.",
+    scope: "world",
+    config: false,
+    type: Number,
+    default: 5
   });
   register("vehicleLabel", { name: "Vehicle Label", hint: "Shown in menus as Vessel, Ship, Vehicle, Carriage, etc.", scope: "world", config: false, type: String, default: "Vessel" });
   register("showGmBar", {
@@ -1095,6 +1105,14 @@ function shipUpkeepPercent() {
 
 function calculateShipUpkeep(totalShipCost) {
   return Math.floor(Math.max(0, Number(totalShipCost || 0)) * shipUpkeepPercent() / 100);
+}
+
+function glaxonInsurancePremiumPercent() {
+  return Math.max(0, Number(setting("glaxonInsurancePremiumPercent") ?? 5));
+}
+
+function calculateGlaxonInsurancePremium(totalRepairValue) {
+  return Math.ceil(Math.max(0, Number(totalRepairValue || 0)) * glaxonInsurancePremiumPercent() / 100);
 }
 
 async function updateBank(gp) {
@@ -3401,6 +3419,7 @@ class TradeHubSettingsForm extends FormApplication {
         repairCostPerHp: Number(setting("repairCostPerHp") || 0),
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
         shipUpkeepPercent: shipUpkeepPercent(),
+        glaxonInsurancePremiumPercent: glaxonInsurancePremiumPercent(),
         stockMin: Number(setting("stockMin") || 0),
         stockMax: Number(setting("stockMax") || 0),
         maxPriceChangePercent: Number(setting("maxPriceChangePercent") || 0),
@@ -3502,6 +3521,7 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("repairCostPerHp", Number(formData.repairCostPerHp || 0));
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
     await setSetting("shipUpkeepPercent", Math.max(0, Number(formData.shipUpkeepPercent ?? 0.2)));
+    await setSetting("glaxonInsurancePremiumPercent", Math.max(0, Number(formData.glaxonInsurancePremiumPercent ?? 5)));
     await setSetting("stockMin", Number(formData.stockMin || 0));
     await setSetting("stockMax", Number(formData.stockMax || 0));
     await setSetting("maxPriceChangePercent", Number(formData.maxPriceChangePercent || 0));
