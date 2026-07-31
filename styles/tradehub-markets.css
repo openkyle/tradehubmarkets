@@ -1157,7 +1157,24 @@
 .thm-outfitting {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
+}
+
+.thm-outfitting-app .window-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.thm-outfitting-app .dialog-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.thm-outfitting-app .dialog-buttons {
+  flex: 0 0 auto;
 }
 
 .thm-outfit-summary,
@@ -1178,6 +1195,13 @@
   grid-template-columns: auto minmax(180px, 1fr);
   gap: 10px;
   align-items: center;
+}
+
+.thm-outfit-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .thm-outfit-trade {
@@ -1260,10 +1284,7 @@
 }
 
 .thm-outfit-catalog {
-  max-height: min(560px, 58vh);
-  overflow-y: auto;
   margin: 10px 0;
-  padding-right: 4px;
 }
 
 .thm-outfit-group {
@@ -1396,14 +1417,34 @@
   min-width: 0;
 }
 
+.thm-outfit-item-title {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+}
+
 .thm-outfit-item-name {
-  max-width: 100%;
+  flex: 0 1 auto;
+  max-width: 55%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.thm-outfit-weapon-details {
+.thm-outfit-item-description {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(30, 30, 26, 0.66);
+  font-size: 0.78em;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thm-outfit-item-details {
   max-width: 100%;
   margin-top: 2px;
   overflow: hidden;
@@ -1414,7 +1455,7 @@
   white-space: nowrap;
 }
 
-.thm-outfit-weapon-details span {
+.thm-outfit-item-details span {
   padding: 0 3px;
   color: rgba(117, 40, 32, 0.75);
 }
@@ -1431,9 +1472,11 @@
 }
 
 .thm-outfit-footer {
+  flex: 0 0 auto;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   padding-top: 10px;
   border-top: 1px solid rgba(30, 30, 26, 0.35);
+  background: inherit;
 }
 
 .thm-outfit-footer button {

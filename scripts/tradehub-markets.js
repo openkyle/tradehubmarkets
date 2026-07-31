@@ -732,34 +732,83 @@ function compareShipyardModuleNames(a, b) {
   return left.base.localeCompare(right.base) || left.rank - right.rank || String(a.name).localeCompare(String(b.name));
 }
 
-function shipyardWeaponDetails(row) {
-  if (row.type !== "weapon") return "";
-  const system = row.system || {};
+function shipyardItemDescription(row) {
+  return stripHtml(row.system?.description?.value || row.system?.description?.chat || "").replace(/\s+/g, " ").trim();
+}
+
+function shipyardItemModifier(row, ship) {
+  const abilityId = String(row.system?.ability || "").trim();
+  const ability = ship?.system?.abilities?.[abilityId];
+  const abilityValue = Number(ability?.value);
+  const actorMod = Number(ability?.mod ?? (Number.isFinite(abilityValue) ? Math.floor((abilityValue - 10) / 2) : NaN));
+  if (Number.isFinite(actorMod)) return actorMod;
+  try {
+    const rollData = row.doc?.getRollData?.() || {};
+    const itemMod = Number(rollData.mod ?? rollData.abilityMod);
+    if (Number.isFinite(itemMod)) return itemMod;
+  } catch (_error) {}
+  return 0;
+}
+
+function resolveShipyardFormula(formula, row, ship) {
+  return String(formula || "-")
+    .replace(/@mod\b/gi, String(shipyardItemModifier(row, ship)))
+    .replace(/\+\s*-/g, "- ")
+    .replace(/-\s*-/g, "+ ")
+    .replace(/\s*([+-])\s*/g, " $1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shipyardRangeDetails(system, separate = false) {
   const range = system.range || {};
   const units = range.units ? ` ${range.units}` : "";
   const shortRange = range.value ?? range.normal ?? "-";
   const longRange = range.long ?? "-";
   const shortText = shortRange === "-" ? "-" : `${shortRange}${units}`;
   const longText = longRange === "-" ? "-" : `${longRange}${units}`;
-  const damageParts = Array.isArray(system.damage?.parts) ? system.damage.parts : [];
-  const damage = damageParts.map(part => {
-    if (Array.isArray(part)) return `${part[0] || "-"}${part[1] ? ` ${part[1]}` : ""}`;
-    return `${part?.formula || part?.value || "-"}${part?.type ? ` ${part.type}` : ""}`;
-  }).filter(Boolean).join(", ") || system.damage?.formula || system.damage?.base?.formula || "-";
-  return `<small class="thm-outfit-weapon-details"><b>Damage:</b> ${escapeHtml(damage)} <span>|</span> <b>Short:</b> ${escapeHtml(shortText)} <span>|</span> <b>Long:</b> ${escapeHtml(longText)}</small>`;
+  if (shortText === "-" && longText === "-") return [];
+  if (separate) return [`<b>Short:</b> ${escapeHtml(shortText)}`, `<b>Long:</b> ${escapeHtml(longText)}`];
+  return [`<b>Range:</b> ${escapeHtml(longText === "-" ? shortText : `${shortText} / ${longText}`)}`];
 }
 
-function shipyardOutfitRow(row) {
+function shipyardItemDetails(row, ship) {
+  const system = row.system || {};
+  const details = [];
+  if (row.type === "weapon") {
+    const damageParts = Array.isArray(system.damage?.parts) ? system.damage.parts : [];
+    const damage = damageParts.map(part => {
+      const formula = Array.isArray(part) ? part[0] : part?.formula || part?.value;
+      const type = Array.isArray(part) ? part[1] : part?.type;
+      return `${resolveShipyardFormula(formula, row, ship)}${type ? ` - ${type}` : ""}`;
+    }).filter(Boolean).join(", ") || resolveShipyardFormula(system.damage?.formula || system.damage?.base?.formula, row, ship);
+    details.push(`<b>Damage:</b> ${escapeHtml(damage)}`);
+    details.push(...shipyardRangeDetails(system, true));
+  } else {
+    const ac = system.armor?.value ?? system.ac?.value ?? system.attributes?.ac?.value;
+    const hp = system.hp || system.attributes?.hp;
+    const uses = system.uses || {};
+    if (ac !== undefined && ac !== null && ac !== "") details.push(`<b>AC:</b> ${escapeHtml(ac)}`);
+    if (hp?.max !== undefined || hp?.value !== undefined) details.push(`<b>HP:</b> ${escapeHtml(hp.value ?? hp.max ?? 0)} / ${escapeHtml(hp.max ?? hp.value ?? 0)}`);
+    if (uses.max !== undefined && uses.max !== null && uses.max !== "") details.push(`<b>Charges:</b> ${escapeHtml(uses.value ?? 0)} / ${escapeHtml(uses.max)}`);
+    details.push(...shipyardRangeDetails(system));
+  }
+  return details.length ? `<small class="thm-outfit-item-details">${details.join(' <span>|</span> ')}</small>` : "";
+}
+
+function shipyardOutfitRow(row, ship) {
+  const description = shipyardItemDescription(row);
+  const descriptionHtml = description ? `<span class="thm-outfit-item-description">- ${escapeHtml(description)}</span>` : "";
   return `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}" data-module-type="${row.type}">
     <input class="thm-outfit-purchase" type="checkbox" aria-label="Purchase ${escapeHtml(row.name)}">
     <button type="button" class="thm-outfit-item" data-open-item="${row.uuid}">
-      <img src="${row.img}"><span class="thm-outfit-item-copy"><span class="thm-outfit-item-name">${escapeHtml(row.name)}</span>${shipyardWeaponDetails(row)}</span>
+      <img src="${row.img}"><span class="thm-outfit-item-copy"><span class="thm-outfit-item-title"><span class="thm-outfit-item-name">${escapeHtml(row.name)}</span>${descriptionHtml}</span>${shipyardItemDetails(row, ship)}</span>
     </button>
     <span class="thm-outfit-price">${formatGp(row.price)}</span>
   </div>`;
 }
 
-function shipyardOutfitRows(rows) {
+function shipyardOutfitRows(rows, ship) {
   const families = new Map();
   for (const row of rows) {
     const parts = shipyardModuleNameParts(row);
@@ -769,10 +818,10 @@ function shipyardOutfitRows(rows) {
   }
   return [...families.values()].map(family => {
     family.rows.sort(compareShipyardModuleNames);
-    if (family.rows.length === 1) return shipyardOutfitRow(family.rows[0]);
+    if (family.rows.length === 1) return shipyardOutfitRow(family.rows[0], ship);
     return `<details class="thm-outfit-family">
       <summary><span class="thm-outfit-summary-title">${escapeHtml(family.base)}</span><span>${family.rows.length} classes</span></summary>
-      ${family.rows.map(shipyardOutfitRow).join("")}
+      ${family.rows.map(row => shipyardOutfitRow(row, ship)).join("")}
     </details>`;
   }).join("");
 }
@@ -2267,22 +2316,25 @@ class ShipOutfittingPage {
       groups.get(module.folderPath).push(module);
     }
     const shipOptions = ships.map(ship => `<option value="${ship.id}" ${ship.id === selectedShipId ? "selected" : ""}>${escapeHtml(ship.name)}</option>`).join("");
-    const sections = [...groups.entries()].map(([folder, rows]) => `<details class="thm-outfit-group">
+    const renderSections = ship => [...groups.entries()].map(([folder, rows]) => `<details class="thm-outfit-group">
       <summary><span class="thm-outfit-summary-title">${escapeHtml(folder)}</span><span>${rows.length} module${rows.length === 1 ? "" : "s"}</span></summary>
-      ${shipyardOutfitRows(rows)}
+      ${shipyardOutfitRows(rows, ship)}
     </details>`).join("");
+    const sections = renderSections(game.actors.get(selectedShipId));
     const content = `<div class="thm-root thm-outfitting">
       <div class="thm-outfit-summary">
         <label><b>Outfit Craft</b><select id="thm-outfit-ship">${shipOptions}</select></label>
         <div><b>TradeHub Capital:</b> <span id="thm-outfit-capital">${formatGp(bankBalance())}</span></div>
       </div>
-      <details class="thm-outfit-trade">
-        <summary><b>Current Vessel Modules - Trade In for Credit</b> <span id="thm-outfit-trade-summary">0 GP credit</span></summary>
-        <p>Select only the installed modules to sell. TradeHub credits 75% of each module's listed value.</p>
-        <div class="thm-cargo-bay-warning" id="thm-outfit-cargo-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
-        <div id="thm-outfit-trade-items"></div>
-      </details>
-      <div class="thm-outfit-catalog">${sections}</div>
+      <div class="thm-outfit-scroll">
+        <details class="thm-outfit-trade">
+          <summary><b>Current Vessel Modules - Trade In for Credit</b> <span id="thm-outfit-trade-summary">0 GP credit</span></summary>
+          <p>Select only the installed modules to sell. TradeHub credits 75% of each module's listed value.</p>
+          <div class="thm-cargo-bay-warning" id="thm-outfit-cargo-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
+          <div id="thm-outfit-trade-items"></div>
+        </details>
+        <div class="thm-outfit-catalog">${sections}</div>
+      </div>
       <div class="thm-outfit-footer">
         <div><b>Purchase Total:</b> <span id="thm-outfit-total">0 GP</span></div>
         <div><b>Trade-In Credit:</b> <span id="thm-outfit-credit">0 GP</span></div>
@@ -2361,11 +2413,11 @@ class ShipOutfittingPage {
         html.find("#thm-outfit-ship").on("change", ev => {
           selectedShipId = ev.currentTarget.value;
           selectedShipName = selectedShip()?.name || "";
-          html.find(".thm-outfit-purchase").prop("checked", false);
+          html.find(".thm-outfit-catalog").html(renderSections(game.actors.get(selectedShipId)));
           renderTradeIns();
           recalc();
         });
-        html.find(".thm-outfit-purchase").on("change", ev => recalc(ev.currentTarget, ev.currentTarget.checked));
+        html.find(".thm-outfit-catalog").on("change", ".thm-outfit-purchase", ev => recalc(ev.currentTarget, ev.currentTarget.checked));
         html.find("#thm-outfit-trade-items").on("change", ".thm-outfit-trade-item", ev => {
           const input = ev.currentTarget;
           if (!input.checked && !enforceCapacity()) {
@@ -2375,7 +2427,7 @@ class ShipOutfittingPage {
           }
           recalc();
         });
-        html.find("[data-open-item]").on("click", async ev => (await fromUuid(ev.currentTarget.dataset.openItem))?.sheet?.render(true));
+        html.find(".thm-outfit-catalog").on("click", "[data-open-item]", async ev => (await fromUuid(ev.currentTarget.dataset.openItem))?.sheet?.render(true));
         html.find("#thm-outfit-buy").on("click", async () => {
           const button = html.find("#thm-outfit-buy");
           const items = html.find(".thm-outfit-row").toArray()
@@ -2396,7 +2448,7 @@ class ShipOutfittingPage {
         renderTradeIns();
         recalc();
       }
-    }, { ...dialogOptions(), width: 820, height: Math.min(820, Number(globalThis.innerHeight || 900) * 0.82) });
+    }, { ...dialogOptions(["thm-outfitting-app"]), width: 820, height: Math.min(820, Number(globalThis.innerHeight || 900) * 0.82) });
     attachWindow(dialog);
     dialog.render(true);
   }
