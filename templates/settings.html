@@ -105,6 +105,20 @@
     </div>
     <div class="thm-settings-row thm-checkbox-row">
       <label>
+        <span>Require Glaxon Insurance Confirmation Code</span>
+        <small>When enabled, new Glaxon coverage requires a code supplied by an NPC representative. Cancelling coverage never requires the code.</small>
+      </label>
+      <input type="checkbox" name="glaxonInsuranceCodeRequired" {{#if settings.glaxonInsuranceCodeRequired}}checked{{/if}}>
+    </div>
+    <div class="thm-settings-row">
+      <label>
+        <span>Glaxon Insurance Confirmation Code</span>
+        <small>Players must enter this exact code before new insurance coverage can be activated. Leading and trailing spaces are ignored.</small>
+      </label>
+      <input type="text" name="glaxonInsuranceConfirmationCode" value="{{settings.glaxonInsuranceConfirmationCode}}" autocomplete="off">
+    </div>
+    <div class="thm-settings-row thm-checkbox-row">
+      <label>
         <span>Launch Marketplace On Dock</span>
         <small>Open Starport Services for logged-in users when docking completes.</small>
       </label>

@@ -86,6 +86,11 @@ function moduleApi() {
   game.tradehub.calculateShipUpkeep = calculateShipUpkeep;
   game.tradehub.getGlaxonInsurancePremiumPercent = glaxonInsurancePremiumPercent;
   game.tradehub.calculateGlaxonInsurancePremium = calculateGlaxonInsurancePremium;
+  game.tradehub.getGlaxonInsuranceCodeRequired = glaxonInsuranceCodeRequired;
+  game.tradehub.setGlaxonInsuranceCodeRequired = setGlaxonInsuranceCodeRequired;
+  game.tradehub.getGlaxonInsuranceConfirmationCode = glaxonInsuranceConfirmationCode;
+  game.tradehub.setGlaxonInsuranceConfirmationCode = setGlaxonInsuranceConfirmationCode;
+  game.tradehub.validateGlaxonInsuranceConfirmationCode = validateGlaxonInsuranceConfirmationCode;
 }
 
 Hooks.once("init", () => {
@@ -541,6 +546,22 @@ function registerSettings() {
     config: false,
     type: Number,
     default: 5
+  });
+  register("glaxonInsuranceCodeRequired", {
+    name: "Require Glaxon Insurance Confirmation Code",
+    hint: "Require an exact confirmation code before new Glaxon insurance coverage can be activated.",
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: false
+  });
+  register("glaxonInsuranceConfirmationCode", {
+    name: "Glaxon Insurance Confirmation Code",
+    hint: "The code supplied by an NPC Glaxon representative when confirmation is required.",
+    scope: "world",
+    config: false,
+    type: String,
+    default: ""
   });
   register("vehicleLabel", { name: "Vehicle Label", hint: "Shown in menus as Vessel, Ship, Vehicle, Carriage, etc.", scope: "world", config: false, type: String, default: "Vessel" });
   register("showGmBar", {
@@ -1157,11 +1178,53 @@ function calculateShipUpkeep(totalShipCost) {
 }
 
 function glaxonInsurancePremiumPercent() {
+  const key = "vehicleOpsGlaxonPremiumPercent";
+  if (fsaSharedSettingExists(key)) return Math.max(0, Number(game.settings.get(FSA_MODULE_ID, key) ?? 5));
   return Math.max(0, Number(setting("glaxonInsurancePremiumPercent") ?? 5));
 }
 
 function calculateGlaxonInsurancePremium(totalRepairValue) {
   return Math.ceil(Math.max(0, Number(totalRepairValue || 0)) * glaxonInsurancePremiumPercent() / 100);
+}
+
+const FSA_MODULE_ID = "full-speed-ahead";
+
+function fsaSharedSettingExists(key) {
+  return game.modules.get(FSA_MODULE_ID)?.active === true
+    && game.settings.settings.has(`${FSA_MODULE_ID}.${key}`);
+}
+
+function glaxonInsuranceCodeRequired() {
+  const key = "vehicleOpsInsuranceCodeRequired";
+  if (fsaSharedSettingExists(key)) return game.settings.get(FSA_MODULE_ID, key) === true;
+  return setting("glaxonInsuranceCodeRequired") === true;
+}
+
+async function setGlaxonInsuranceCodeRequired(value) {
+  const required = value === true;
+  await setSetting("glaxonInsuranceCodeRequired", required);
+  const key = "vehicleOpsInsuranceCodeRequired";
+  if (fsaSharedSettingExists(key)) await game.settings.set(FSA_MODULE_ID, key, required);
+  return required;
+}
+
+function glaxonInsuranceConfirmationCode() {
+  const key = "vehicleOpsInsuranceConfirmationCode";
+  if (fsaSharedSettingExists(key)) return String(game.settings.get(FSA_MODULE_ID, key) ?? "").trim();
+  return String(setting("glaxonInsuranceConfirmationCode") ?? "").trim();
+}
+
+async function setGlaxonInsuranceConfirmationCode(value) {
+  const code = String(value ?? "").trim();
+  await setSetting("glaxonInsuranceConfirmationCode", code);
+  const key = "vehicleOpsInsuranceConfirmationCode";
+  if (fsaSharedSettingExists(key)) await game.settings.set(FSA_MODULE_ID, key, code);
+  return code;
+}
+
+function validateGlaxonInsuranceConfirmationCode(code) {
+  if (!glaxonInsuranceCodeRequired()) return true;
+  return String(code ?? "").trim() === glaxonInsuranceConfirmationCode();
 }
 
 async function updateBank(gp) {
@@ -3471,6 +3534,8 @@ class TradeHubSettingsForm extends FormApplication {
         repairCostPerShieldPoint: Number(setting("repairCostPerShieldPoint") || 0),
         shipUpkeepPercent: shipUpkeepPercent(),
         glaxonInsurancePremiumPercent: glaxonInsurancePremiumPercent(),
+        glaxonInsuranceCodeRequired: glaxonInsuranceCodeRequired(),
+        glaxonInsuranceConfirmationCode: glaxonInsuranceConfirmationCode(),
         stockMin: Number(setting("stockMin") || 0),
         stockMax: Number(setting("stockMax") || 0),
         maxPriceChangePercent: Number(setting("maxPriceChangePercent") || 0),
@@ -3573,6 +3638,11 @@ class TradeHubSettingsForm extends FormApplication {
     await setSetting("repairCostPerShieldPoint", Number(formData.repairCostPerShieldPoint || 0));
     await setSetting("shipUpkeepPercent", Math.max(0, Number(formData.shipUpkeepPercent ?? 0.2)));
     await setSetting("glaxonInsurancePremiumPercent", Math.max(0, Number(formData.glaxonInsurancePremiumPercent ?? 5)));
+    if (fsaSharedSettingExists("vehicleOpsGlaxonPremiumPercent")) {
+      await game.settings.set(FSA_MODULE_ID, "vehicleOpsGlaxonPremiumPercent", Math.max(0, Number(formData.glaxonInsurancePremiumPercent ?? 5)));
+    }
+    await setGlaxonInsuranceCodeRequired(!!formData.glaxonInsuranceCodeRequired);
+    await setGlaxonInsuranceConfirmationCode(formData.glaxonInsuranceConfirmationCode ?? "");
     await setSetting("stockMin", Number(formData.stockMin || 0));
     await setSetting("stockMax", Number(formData.stockMax || 0));
     await setSetting("maxPriceChangePercent", Number(formData.maxPriceChangePercent || 0));
