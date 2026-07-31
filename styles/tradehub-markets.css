@@ -1187,11 +1187,40 @@
 
 .thm-outfit-trade summary {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
   cursor: pointer;
   background: rgba(35, 35, 31, 0.1);
+}
+
+.thm-outfit-trade summary::-webkit-details-marker,
+.thm-outfit-group > summary::-webkit-details-marker,
+.thm-outfit-family > summary::-webkit-details-marker {
+  display: none;
+}
+
+.thm-outfit-trade summary::before,
+.thm-outfit-group > summary::before,
+.thm-outfit-family > summary::before {
+  content: "\f054";
+  flex: 0 0 auto;
+  font-family: "Font Awesome 5 Free";
+  font-size: 0.78em;
+  font-weight: 900;
+  transition: transform 120ms ease;
+}
+
+.thm-outfit-trade[open] > summary::before,
+.thm-outfit-group[open] > summary::before,
+.thm-outfit-family[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.thm-outfit-trade summary b,
+.thm-outfit-summary-title {
+  margin-right: auto;
 }
 
 .thm-outfit-trade > p {
@@ -1265,6 +1294,12 @@
   font-weight: 700;
 }
 
+.thm-outfit-group > summary .thm-outfit-summary-title {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 .thm-outfit-family {
   margin: 3px 6px;
   border: 1px solid rgba(30, 30, 26, 0.16);
@@ -1272,6 +1307,7 @@
 
 .thm-outfit-family > summary {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 6px 9px;
@@ -1285,6 +1321,12 @@
   color: rgba(30, 30, 26, 0.6);
   font-size: 0.8em;
   font-weight: 700;
+}
+
+.thm-outfit-family > summary .thm-outfit-summary-title {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 .thm-outfit-header,

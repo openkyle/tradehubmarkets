@@ -719,7 +719,7 @@ async function getShipyardModules() {
 
 function shipyardModuleNameParts(module) {
   const name = String(module?.name || "");
-  const match = name.match(/^(.*?)\s*\[(Prismatic|S|A|B|C|D|E)\]\s*$/i);
+  const match = name.match(/^(.*?)\s*\[\s*(Prismatic|S|A|B|C|D|E)\s*\]\s*$/i);
   if (!match) return { base: name, tier: "", rank: 99 };
   const tier = match[2].toUpperCase();
   const ranks = { PRISMATIC: 0, S: 1, A: 2, B: 3, C: 4, D: 5, E: 6 };
@@ -771,7 +771,7 @@ function shipyardOutfitRows(rows) {
     family.rows.sort(compareShipyardModuleNames);
     if (family.rows.length === 1) return shipyardOutfitRow(family.rows[0]);
     return `<details class="thm-outfit-family">
-      <summary>${escapeHtml(family.base)} <span>${family.rows.length} classes</span></summary>
+      <summary><span class="thm-outfit-summary-title">${escapeHtml(family.base)}</span><span>${family.rows.length} classes</span></summary>
       ${family.rows.map(shipyardOutfitRow).join("")}
     </details>`;
   }).join("");
@@ -2268,8 +2268,7 @@ class ShipOutfittingPage {
     }
     const shipOptions = ships.map(ship => `<option value="${ship.id}" ${ship.id === selectedShipId ? "selected" : ""}>${escapeHtml(ship.name)}</option>`).join("");
     const sections = [...groups.entries()].map(([folder, rows]) => `<details class="thm-outfit-group">
-      <summary>${escapeHtml(folder)} <span>${rows.length} module${rows.length === 1 ? "" : "s"}</span></summary>
-      <div class="thm-outfit-header"><span>Qty</span><span aria-hidden="true"></span><span>Price</span></div>
+      <summary><span class="thm-outfit-summary-title">${escapeHtml(folder)}</span><span>${rows.length} module${rows.length === 1 ? "" : "s"}</span></summary>
       ${shipyardOutfitRows(rows)}
     </details>`).join("");
     const content = `<div class="thm-root thm-outfitting">
@@ -2278,7 +2277,7 @@ class ShipOutfittingPage {
         <div><b>TradeHub Capital:</b> <span id="thm-outfit-capital">${formatGp(bankBalance())}</span></div>
       </div>
       <details class="thm-outfit-trade">
-        <summary><b>Trade In Installed Modules</b> <span id="thm-outfit-trade-summary">0 GP credit</span></summary>
+        <summary><b>Current Vessel Modules - Trade In for Credit</b> <span id="thm-outfit-trade-summary">0 GP credit</span></summary>
         <p>Select only the installed modules to sell. TradeHub credits 75% of each module's listed value.</p>
         <div class="thm-cargo-bay-warning" id="thm-outfit-cargo-warning" hidden><i class="fas fa-exclamation-triangle"></i> Warning: Selling a Cargo Bay will discard all cargo. This cannot be undone.</div>
         <div id="thm-outfit-trade-items"></div>
