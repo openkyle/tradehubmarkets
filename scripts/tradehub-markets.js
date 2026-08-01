@@ -1371,17 +1371,18 @@ function attachWindow(app) {
   };
 }
 
-function refreshOpenWindows() {
+function refreshOpenWindows(capital = bankBalance()) {
   for (const app of [...openWindows]) {
     if (app.rendered) app.render(false);
   }
-  refreshVehicleSheetCapital();
-  SplashPage.refreshSplash();
+  refreshVehicleSheetCapital(capital);
+  SplashPage.refreshSplash(capital);
 }
 
 function broadcastRefresh(openSplash = false) {
-  game.socket.emit(SOCKET, { type: "refresh", openSplash });
-  refreshOpenWindows();
+  const capital = bankBalance();
+  game.socket.emit(SOCKET, { type: "refresh", openSplash, capital });
+  refreshOpenWindows(capital);
 }
 
 function requestGm(action, payload, { awaitResponse = false } = {}) {
@@ -1431,7 +1432,7 @@ async function handleSocket(message) {
     return;
   }
   if (message.type === "refresh") {
-    refreshOpenWindows();
+    refreshOpenWindows(Number.isFinite(Number(message.capital)) ? Number(message.capital) : bankBalance());
     if (message.openSplash) SplashPage.showSplash();
   }
   if (message.type === "warezGlitch") playWarezHackEffects();
@@ -1563,10 +1564,17 @@ class SplashPage {
     for (const app of Object.values(ui.windows)) if (app.title === "Starport Services") app.close();
   }
 
-  static refreshSplash() {
+  static refreshSplash(capital = bankBalance()) {
+    const text = `Capital: ${formatGp(capital)}`;
+    document.querySelectorAll('[id="thm-starport-capital"]').forEach(element => {
+      element.textContent = text;
+    });
+    for (const app of openWindows) {
+      app.element?.find?.("#thm-starport-capital").text(text);
+    }
     for (const app of Object.values(ui.windows)) {
       if (app.title !== "Starport Services") continue;
-      app.element?.find("#thm-starport-capital").text(`Capital: ${formatGp(bankBalance())}`);
+      app.element?.find("#thm-starport-capital").text(text);
     }
   }
 }
@@ -2846,8 +2854,8 @@ function vehicleSheetToolsHtml(_actor) {
   </div>`;
 }
 
-function refreshVehicleSheetCapital() {
-  $(".thm-sheet-shiptools-capital").text(`TradeHub Capital: ${formatGp(bankBalance())}`);
+function refreshVehicleSheetCapital(capital = bankBalance()) {
+  $(".thm-sheet-shiptools-capital").text(`TradeHub Capital: ${formatGp(capital)}`);
 }
 
 function findConditionImmunityInsertion(root) {
