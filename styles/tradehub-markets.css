@@ -1350,28 +1350,11 @@
   font-weight: inherit;
 }
 
-.thm-outfit-header,
 .thm-outfit-row {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) 120px;
   gap: 8px;
   align-items: center;
-}
-
-.thm-outfit-header {
-  padding: 5px 8px;
-  font-size: 0.82em;
-  font-weight: 900;
-  background: rgba(35, 35, 31, 0.72);
-  color: #fff;
-}
-
-.thm-outfit-header span:first-child {
-  text-align: center;
-}
-
-.thm-outfit-header span:last-child {
-  text-align: right;
 }
 
 .thm-outfit-row {
@@ -1494,7 +1477,6 @@
     grid-template-columns: 1fr;
   }
 
-  .thm-outfit-header,
   .thm-outfit-row {
     grid-template-columns: 30px minmax(0, 1fr) 92px;
   }
