@@ -2838,7 +2838,12 @@ function placeVehicleSheetTools(root, actor) {
   }
 }
 
-function vehicleSheetToolsHtml(_actor) {
+function hasPlayerOwner(actor) {
+  if (!actor) return false;
+  return game.users.some(user => !user.isGM && actor.testUserPermission?.(user, "OWNER"));
+}
+
+function vehicleSheetToolsHtml(actor) {
   const tradeHubActive = game.modules.get(MODULE_ID)?.active === true;
   const state = serviceState();
   const docked = tradeHubActive && state.any;
@@ -2848,7 +2853,7 @@ function vehicleSheetToolsHtml(_actor) {
     ? `<button type="button" data-thm-sheet-tool="market" ${docked ? "" : "disabled"} title="${docked ? `Open ${escapeHtml(marketLabel)}` : "TradeHub Markets is unavailable while undocked"}"><i class="fas fa-store"></i> ${escapeHtml(marketLabel)}</button>`
     : "";
   return `<div class="tradehub-markets thm-sheet-shiptools">
-    <div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>
+    ${hasPlayerOwner(actor) ? `<div class="thm-sheet-shiptools-capital">TradeHub Capital: ${formatGp(bankBalance())}</div>` : ""}
     ${marketButton}
     <button type="button" data-thm-sheet-tool="cargo"><i class="fas fa-box-open"></i> View Cargo</button>
   </div>`;
