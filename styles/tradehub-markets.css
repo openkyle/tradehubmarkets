@@ -1374,6 +1374,7 @@
   gap: 8px;
   min-width: 0;
   min-height: 38px;
+  height: auto;
   padding: 2px 6px;
   border: 0;
   background: transparent;
@@ -1412,6 +1413,10 @@
 
 .thm-outfit-item-name {
   display: block;
+  width: 100%;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
   font-weight: 700;
   white-space: normal;
   overflow-wrap: anywhere;
