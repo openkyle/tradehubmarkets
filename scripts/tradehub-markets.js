@@ -4046,7 +4046,6 @@ class HeroesForHirePage {
     const terms = plainLinesFromHtml(pageText(h4hPage("HeroTerms", false)));
     const notch = terms[Math.max(0, Math.min(terms.length - 1, Math.floor(nums.length / 10)))] || "Virtual Nobodies";
     const fans = parseNumber(stripHtml(pageText(h4hPage("Fans", false)))).toLocaleString();
-    const bounties = bountyRows();
     const banner = setting("heroesForHireImage") || "https://assets.forge-vtt.com/62bf9a2b7fa42ce7966f6738/STARPG/Icons/H4H2.webp";
     const content = `<div class="thm-root thm-compact thm-center">
       <div class="thm-green" style="font-size:2em;font-weight:bold;">${escapeHtml(groupName)}</div>
@@ -4059,7 +4058,7 @@ class HeroesForHirePage {
       <div>${[1, 2, 3, 4, 5].map(i => `<span style="font-size:24px;color:${i <= average ? "goldenrod" : "black"};">${i <= average ? "★" : "•"}</span>`).join("")}</div>
       <div>${nums.length.toLocaleString()} personal bonds</div>
       <div>${fans} loyal followers</div>
-      <div class="thm-h4h-actions"><button id="view-ratings">View Relationships</button><button id="mission-board">Mission Board</button><button id="bounty-board">Bounty Board</button>${bounties.length ? `<button id="clear-bounty">Pay Bounty / Clear Name</button>` : ""}</div>
+      <div class="thm-h4h-actions"><button id="view-ratings">View Relationships</button><button id="mission-board">Mission Board</button><button id="bounty-board">Bounty Board</button><button id="view-ship">View Ship</button></div>
     </div>`;
     new Dialog({
       title: "Heroes for Hire",
@@ -4081,7 +4080,7 @@ class HeroesForHirePage {
         html.find("#view-ratings").on("click", () => new Dialog({ title: "Relationships", content: `<div class="thm-root thm-compact">${ratings.map(escapeHtml).join("<br><br>") || "No relationships recorded."}</div>`, buttons: { close: { label: "Close" } } }).render(true));
         html.find("#mission-board").on("click", () => this.showMissionBoard());
         html.find("#bounty-board").on("click", () => this.showBountyBoard());
-        html.find("#clear-bounty").on("click", () => this.showPayBounties());
+        html.find("#view-ship").on("click", () => ShipToolsPage.show());
       }
     }, { ...dialogOptions(), width: 560 }).render(true);
   }
@@ -4122,7 +4121,10 @@ class HeroesForHirePage {
         <div><strong>Total Bounty:</strong> ${formatGp(row.bounty)}</div>
       </div>`;
     }).join("") || `<div class="thm-bounty-row">No active bounties.</div>`;
-    new Dialog({ title: "Bounty Board", content: `<div class="thm-root thm-compact"><div class="thm-bounty-list">${html}</div><p class="thm-bounty-note"><i>Bounties are automatically paid upon destroying the target.</i></p></div>`, buttons: { close: { label: "Close" } } }).render(true);
+    new Dialog({ title: "Bounty Board", content: `<div class="thm-root thm-compact"><div class="thm-bounty-list">${html}</div><p class="thm-bounty-note"><i>Bounties are automatically paid upon destroying the target.</i></p></div>`, buttons: {
+      ...(rows.length ? { pay: { label: "Pay Bounty / Clear Name", callback: () => this.showPayBounties() } } : {}),
+      close: { label: "Close" }
+    } }).render(true);
   }
 
   static showPayBounties() {
