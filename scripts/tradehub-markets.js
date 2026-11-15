@@ -819,11 +819,11 @@ function shipyardItemDetails(row, ship) {
 
 function shipyardOutfitRow(row, ship) {
   const description = shipyardItemDescription(row);
-  const descriptionHtml = description ? `<span class="thm-outfit-item-description">- ${escapeHtml(description)}</span>` : "";
+  const descriptionHtml = description ? `<span class="thm-outfit-item-description">${escapeHtml(description)}</span>` : "";
   return `<div class="thm-outfit-row" data-uuid="${row.uuid}" data-price="${row.price}" data-module-type="${row.type}">
     <input class="thm-outfit-purchase" type="checkbox" aria-label="Purchase ${escapeHtml(row.name)}">
     <button type="button" class="thm-outfit-item" data-open-item="${row.uuid}">
-      <img src="${row.img}"><span class="thm-outfit-item-copy"><span class="thm-outfit-item-title"><span class="thm-outfit-item-name">${escapeHtml(row.name)}</span>${descriptionHtml}</span>${shipyardItemDetails(row, ship)}</span>
+      <img src="${row.img}"><span class="thm-outfit-item-copy"><span class="thm-outfit-item-title"><span class="thm-outfit-item-name">${escapeHtml(row.name)}</span></span>${descriptionHtml}${shipyardItemDetails(row, ship)}</span>
     </button>
     <span class="thm-outfit-price">${formatGp(row.price)}</span>
   </div>`;
