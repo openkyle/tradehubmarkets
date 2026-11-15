@@ -2271,6 +2271,7 @@ class DockingPage {
         <label><span>Supply Restock Available</span><input type="checkbox" id="supply-restock"></label>
         <label><span>Clear All Last Paid Prices</span><input type="checkbox" id="clear"></label>
         <label><span>Force Player Profit</span><input type="checkbox" id="profit"></label>
+        <label><span>Open Market on Dock</span><input type="checkbox" id="launch-on-dock" ${setting("launchOnDock") ? "checked" : ""}></label>
         <label><span>Play Dock Sound</span><input type="checkbox" id="play-sound" ${setting("dockSoundPath") ? "checked" : ""}></label>
         <label><span>Use "in" instead of "on" when located here</span><input type="checkbox" id="use-in"></label>
         <label><span>Delete Location</span><input type="checkbox" id="delete-location"></label>
@@ -2327,6 +2328,7 @@ class DockingPage {
       useIn: html.find("#use-in").prop("checked"),
       clearLastPaid: html.find("#clear").prop("checked"),
       forceProfit: html.find("#profit").prop("checked"),
+      launchOnDock: html.find("#launch-on-dock").prop("checked"),
       playDockSound: html.find("#play-sound").prop("checked")
     });
   }
@@ -2341,7 +2343,7 @@ function toggleMarketControls(html) {
 function toggleDeleteLocationMode(html) {
   const deleting = html.find("#delete-location").prop("checked");
   html.closest(".app").find('button[data-button="dock"]').html(deleting ? "<b>Delete Location</b>" : "<b>Dock / Travel</b>");
-  html.find("#market-state, #illegal, #shipyard, #supply-restock, #clear, #profit, #play-sound, #use-in").prop("disabled", deleting);
+  html.find("#market-state, #illegal, #shipyard, #supply-restock, #clear, #profit, #launch-on-dock, #play-sound, #use-in").prop("disabled", deleting);
   if (!deleting) toggleMarketControls(html);
 }
 
@@ -4514,6 +4516,7 @@ class Transactions {
       if (soundPath) AudioHelper.play({ src: soundPath, volume: 0.8, autoplay: true, loop: false }, true);
       else ui.notifications.warn("TradeHub dock sound was requested, but no Dock / Travel sound file is configured.");
     }
+    if (typeof payload.launchOnDock === "boolean") await setSetting("launchOnDock", payload.launchOnDock);
     broadcastRefresh(setting("launchOnDock"));
   }
 
